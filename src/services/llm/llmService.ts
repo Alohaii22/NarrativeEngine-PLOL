@@ -3,7 +3,7 @@ import { countTokens } from '../infrastructure/tokenizer';
 import type { EndpointConfig, ProviderConfig, SamplingConfig, ThinkingEffort } from '../../types';
 import { uid } from '../../utils/uid';
 import { getQueueForEndpoint } from './llmRequestQueue';
-import { getChatUrl, getModelsUrl, buildChatHeaders, buildChatBody, getApiFormat, extractStreamDelta, extractStreamToolCall } from '../../utils/llmApiHelper';
+import { getChatUrl, getModelsUrl, buildChatHeaders, buildChatBody, getApiFormat, extractStreamDelta, extractStreamToolCall, ClaudeThinkingCollector, rememberClaudeThinking } from '../../utils/llmApiHelper';
 import { recordCacheUsage, type LLMUsage } from './cacheTelemetry';
 import { llmFetch } from './llmFetch';
 import { startUtilityCall } from './utilityCallTracker';
@@ -118,6 +118,7 @@ export async function sendMessage(
             let tcId = '';
             let tcName = '';
             let tcArgs = '';
+            const claudeThinking = format === 'claude' ? new ClaudeThinkingCollector() : undefined;
 
             while (true) {
                 const { done, value } = await reader.read();
@@ -152,6 +153,13 @@ export async function sendMessage(
 
                         try {
                             const parsed = JSON.parse(data);
+                            if (claudeThinking) {
+                                const thinkingDelta = claudeThinking.push(parsed);
+                                if (thinkingDelta) {
+                                    reasoningContent += thinkingDelta;
+                                    onReasoning?.(reasoningContent);
+                                }
+                            }
                             const delta = extractStreamDelta(parsed, provider);
                             if (delta) {
                                 fullText += delta;
@@ -251,6 +259,7 @@ export async function sendMessage(
 
             streamSettled = true;
             if (tcName) {
+                if (claudeThinking) rememberClaudeThinking(tcId, claudeThinking.result());
                 trackerHandle.settleSuccess();
                 onDone(fullText, { id: tcId, name: tcName, arguments: tcArgs }, reasoningContent || undefined);
             } else {

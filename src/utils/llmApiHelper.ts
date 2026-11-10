@@ -21,6 +21,47 @@ const DEEPSEEK_EFFORT_MAP: Record<ThinkingEffort, string | undefined> = {
 const CLAUDE_BUDGET_MAP: Record<ThinkingEffort, number | undefined> = {
     off: undefined, low: 1024, medium: 4096, high: 8192, max: 16384
 };
+const CLAUDE_EFFORT_MAP: Record<Exclude<ThinkingEffort, 'off'>, string> = {
+    low: 'low', medium: 'medium', high: 'high', max: 'max',
+};
+
+export interface ClaudeModelProfile {
+    /** Uses `thinking: {type: 'adaptive'}` + `output_config.effort` instead of `budget_tokens`. */
+    adaptiveThinking: boolean;
+    /** Thinking cannot be turned off (sending `disabled` is a 400). */
+    thinkingAlwaysOn: boolean;
+    /** Accepts `temperature` / `top_p` / `top_k`. */
+    acceptsSampling: boolean;
+}
+
+/**
+ * Request-shape rules per Claude model family. Newer models reject
+ * `budget_tokens` and sampling parameters with a 400, so sending the
+ * legacy shape to them breaks every turn. Unknown names fall back to the
+ * legacy shape, which older and third-party-hosted models still accept.
+ */
+export function claudeModelProfile(modelName: string | undefined): ClaudeModelProfile {
+    const m = (modelName || '').toLowerCase();
+    const legacy: ClaudeModelProfile = { adaptiveThinking: false, thinkingAlwaysOn: false, acceptsSampling: true };
+    if (/claude-(fable|mythos)/.test(m)) {
+        return { adaptiveThinking: true, thinkingAlwaysOn: true, acceptsSampling: false };
+    }
+    const match = m.match(/claude-(opus|sonnet|haiku)-(\d+)(?:[-.](\d+))?(?![\d])/);
+    if (!match) return legacy;
+    const family = match[1];
+    const major = Number(match[2]);
+    // A trailing 8-digit chunk is a date snapshot, not a minor version.
+    const minor = match[3] && match[3].length <= 2 ? Number(match[3]) : 0;
+    const version = major + minor / 10;
+    if (version < 4.6) return legacy;
+    if (version < 4.7) return { adaptiveThinking: true, thinkingAlwaysOn: false, acceptsSampling: true };
+    const thinkingAlwaysOn =
+        (family === 'opus' && version >= 5.5) ||
+        (family === 'sonnet' && version >= 5.5) ||
+        (family === 'haiku' && version >= 5.5);
+    return { adaptiveThinking: true, thinkingAlwaysOn, acceptsSampling: false };
+}
+
 const GEMINI_LEVEL_MAP: Record<ThinkingEffort, number | undefined> = {
     off: undefined, low: 512, medium: 2048, high: 4096, max: 8192
 };
@@ -152,11 +193,96 @@ export function buildChatHeaders(provider: AnyProvider): Record<string, string> 
     return headers;
 }
 
+// ── Claude thinking-block continuity across a tool loop ─────────────────
+// With thinking on, Claude requires the assistant turn that issued a tool_use
+// to be sent back with its original (signed) thinking blocks when the tool
+// result is returned. The app keeps history in OpenAI shape, which has no
+// place for them, so they are held here keyed by the tool_use id.
+export type ClaudeThinkingBlock =
+    | { type: 'thinking'; thinking: string; signature: string }
+    | { type: 'redacted_thinking'; data: string };
+
+const CLAUDE_THINKING_STORE_LIMIT = 256;
+const claudeThinkingByToolUseId = new Map<string, ClaudeThinkingBlock[]>();
+
+export function rememberClaudeThinking(toolUseId: string, blocks: ClaudeThinkingBlock[]): void {
+    if (!toolUseId || blocks.length === 0) return;
+    claudeThinkingByToolUseId.set(toolUseId, blocks);
+    while (claudeThinkingByToolUseId.size > CLAUDE_THINKING_STORE_LIMIT) {
+        const oldest = claudeThinkingByToolUseId.keys().next().value;
+        if (oldest === undefined) break;
+        claudeThinkingByToolUseId.delete(oldest);
+    }
+}
+
+export function recallClaudeThinking(toolUseId: string): ClaudeThinkingBlock[] | undefined {
+    return claudeThinkingByToolUseId.get(toolUseId);
+}
+
+/** Accumulates thinking blocks from a Claude SSE stream. */
+export class ClaudeThinkingCollector {
+    private blocks = new Map<number, ClaudeThinkingBlock>();
+
+    /** Feed one parsed SSE event. Returns any visible thinking text delta. */
+    push(event: unknown): string {
+        const e = event as {
+            type?: string; index?: number;
+            content_block?: { type?: string; thinking?: string; signature?: string; data?: string };
+            delta?: { type?: string; thinking?: string; signature?: string };
+        };
+        const index = e.index ?? 0;
+        if (e.type === 'content_block_start' && e.content_block) {
+            if (e.content_block.type === 'thinking') {
+                this.blocks.set(index, { type: 'thinking', thinking: e.content_block.thinking ?? '', signature: e.content_block.signature ?? '' });
+            } else if (e.content_block.type === 'redacted_thinking') {
+                this.blocks.set(index, { type: 'redacted_thinking', data: e.content_block.data ?? '' });
+            }
+            return '';
+        }
+        if (e.type === 'content_block_delta' && e.delta) {
+            const block = this.blocks.get(index);
+            if (!block || block.type !== 'thinking') return '';
+            if (e.delta.type === 'thinking_delta' && e.delta.thinking) {
+                block.thinking += e.delta.thinking;
+                return e.delta.thinking;
+            }
+            if (e.delta.type === 'signature_delta' && e.delta.signature) {
+                block.signature += e.delta.signature;
+            }
+        }
+        return '';
+    }
+
+    result(): ClaudeThinkingBlock[] {
+        return [...this.blocks.entries()].sort((a, b) => a[0] - b[0]).map(([, b]) => b);
+    }
+}
+
+/** OpenAI-style `{type:'function', function:{...}}` tools → Claude tool definitions. */
+export function transformClaudeTools(tools: unknown[]): unknown[] {
+    return tools.map(t => {
+        const tool = t as { type?: string; function?: { name: string; description?: string; parameters?: unknown }; input_schema?: unknown };
+        if (tool.function && !tool.input_schema) {
+            return {
+                name: tool.function.name,
+                ...(tool.function.description ? { description: tool.function.description } : {}),
+                input_schema: tool.function.parameters ?? { type: 'object', properties: {} },
+            };
+        }
+        return t;
+    });
+}
+
 function transformClaudeMessages(messages: { role: string; content: string | null; name?: string; tool_calls?: unknown[]; tool_call_id?: string; reasoning_content?: string; cache_control?: { type: 'ephemeral' } }[]): { system?: string | ClaudeSystemBlock[]; messages: { role: string; content: string | ClaudeContentBlock[] }[] } {
     const systemBlocks: { text: string; cache_control?: { type: 'ephemeral' } }[] = [];
     const transformed: { role: string; content: string | ClaudeContentBlock[] }[] = [];
 
-    for (const m of messages) {
+    // Only the tool loop after the last real user message needs its thinking
+    // blocks back; earlier turns are left as plain history.
+    let lastUserIndex = -1;
+    messages.forEach((m, i) => { if (m.role === 'user') lastUserIndex = i; });
+
+    for (const [msgIndex, m] of messages.entries()) {
         if (m.role === 'system') {
             systemBlocks.push({ text: m.content || '', ...(m.cache_control ? { cache_control: m.cache_control } : {}) });
             continue;
@@ -170,6 +296,10 @@ function transformClaudeMessages(messages: { role: string; content: string | nul
                 // FINAL emitted content block only, so the breakpoint includes all
                 // text and tool_use blocks. Do not duplicate the marker across blocks.
                 const content: ClaudeContentBlock[] = [];
+                if (msgIndex > lastUserIndex) {
+                    const thinking = recallClaudeThinking(tc[0].id);
+                    if (thinking) content.push(...(thinking as unknown as ClaudeContentBlock[]));
+                }
                 if (m.content) content.push({ type: 'text', text: m.content });
                 for (const t of tc) {
                     let input: unknown = {};
@@ -368,19 +498,43 @@ function buildBaseChatBody(
         };
         if (system) body.system = system;
 
-        if (effort && effort !== 'off') {
+        const profile = claudeModelProfile(provider.modelName);
+
+        if (profile.adaptiveThinking) {
+            // Claude 4.6+ reject (or deprecate) budget_tokens. Depth is set by
+            // effort; thinking itself is adaptive.
+            if (effort && effort !== 'off') {
+                // 4.7+ default to empty thinking text; ask for the summary so
+                // the reasoning panel has something to show.
+                body.thinking = profile.acceptsSampling
+                    ? { type: 'adaptive' }
+                    : { type: 'adaptive', display: 'summarized' };
+                body.output_config = { effort: CLAUDE_EFFORT_MAP[effort] };
+            } else if (effort === 'off' && profile.thinkingAlwaysOn) {
+                // Thinking cannot be disabled on these models — the closest
+                // honest equivalent of "off" is the lowest effort.
+                body.output_config = { effort: 'low' };
+            }
+        } else if (effort && effort !== 'off') {
             const budget = CLAUDE_BUDGET_MAP[effort];
             if (budget !== undefined) {
                 body.thinking = { type: 'enabled', budget_tokens: budget };
             }
         }
 
-        if (options?.temperature !== undefined) body.temperature = options.temperature;
-        else if (options?.sampling?.temperature !== undefined) body.temperature = options.sampling.temperature;
-        if (options?.sampling?.top_p !== undefined) body.top_p = options.sampling.top_p;
-        if (options?.sampling?.top_k !== undefined) body.top_k = options.sampling.top_k;
+        if (profile.acceptsSampling) {
+            if (options?.temperature !== undefined) body.temperature = options.temperature;
+            else if (options?.sampling?.temperature !== undefined) body.temperature = options.sampling.temperature;
+            if (options?.sampling?.top_p !== undefined) body.top_p = options.sampling.top_p;
+            if (options?.sampling?.top_k !== undefined) body.top_k = options.sampling.top_k;
+        }
 
-        if (options?.tools && options.tools.length > 0) body.tools = options.tools;
+        if (options?.tools && options.tools.length > 0) {
+            body.tools = transformClaudeTools(options.tools);
+            // The turn loop executes one tool call per round trip; parallel
+            // tool_use blocks would be merged into one broken argument string.
+            body.tool_choice = { type: 'auto', disable_parallel_tool_use: true };
+        }
         return body;
     }
 
