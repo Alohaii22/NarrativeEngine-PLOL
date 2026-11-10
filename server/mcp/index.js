@@ -12,9 +12,11 @@
  */
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { buildServer } from './server.js';
-import { createEngineClient } from './engineClient.js';
+import { createEngineClient, DEFAULT_ENGINE_URL } from './engineClient.js';
+import { createEngineLauncher } from './engineLauncher.js';
 
-const client = createEngineClient();
+const baseUrl = (process.env.NARRATIVE_ENGINE_URL || DEFAULT_ENGINE_URL).replace(/\/+$/, '');
+const client = createEngineClient({ baseUrl, ensureEngine: createEngineLauncher({ baseUrl }) });
 
 if (process.argv.includes('--http')) {
     const { StreamableHTTPServerTransport } = await import('@modelcontextprotocol/sdk/server/streamableHttp.js');
@@ -36,7 +38,9 @@ if (process.argv.includes('--http')) {
         console.error(`[MCP] Narrative Engine MCP server on http://127.0.0.1:${port}/mcp (engine: ${client.baseUrl})`);
     });
 } else {
-    // stdout is the protocol channel in stdio mode: log to stderr only.
+    // stdout is the protocol channel in stdio mode: everything else goes to stderr.
+    console.log = (...args) => console.error(...args);
+    console.info = console.log;
     const server = buildServer(client);
     await server.connect(new StdioServerTransport());
     console.error(`[MCP] Narrative Engine MCP server ready on stdio (engine: ${client.baseUrl})`);

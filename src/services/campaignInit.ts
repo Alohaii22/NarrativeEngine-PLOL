@@ -3,44 +3,19 @@ import {
     saveLoreChunks, getNPCLedger, saveNPCLedger,
     loadCampaignState, saveCampaignState,
 } from '../store/campaignStore';
-import { chunkLoreFile } from './lore/loreChunker';
 import { extractEngineSeeds } from './lore/loreEngineSeeder';
 import { parseNPCsFromLore } from './lore/loreNPCParser';
 import { parseLocationsFromLoreDetailed } from './lore/loreLocationParser';
 import { locationTableDescriptor, loadLocationTable } from './tables/locationTable';
 import { genericSave } from './tables/genericAccessor';
 import { resolvePlace } from './locationParser';
-import {
-    DEFAULT_SURPRISE_TYPES, DEFAULT_SURPRISE_TONES,
-    DEFAULT_ENCOUNTER_TYPES, DEFAULT_ENCOUNTER_TONES,
-    DEFAULT_WORLD_WHO, DEFAULT_WORLD_WHERE, DEFAULT_WORLD_WHY, DEFAULT_WORLD_WHAT,
-} from '../store/slices/settingsSlice';
 import { dedupeNPCLedger } from '../store/slices/campaignSlice';
 import { loadLootTree } from './lore/lootTreeLoader';
-import { buildDefaultDiceSystem } from '../types';
 import { readWorldFile, type WorldImport } from './lore/worldCard';
 
 
-export const DEFAULT_CONTEXT = {
-    loreRaw: '', rulesRaw: '', canonState: '', headerIndex: '',
-    starter: '', continuePrompt: '', inventory: '', characterProfile: { identity: {}, activeTraits: [] },
-    inventoryItems: [],
-    characterProfileData: { name: '', race: '', class: '', level: 1, hp: { current: 20, max: 20 }, stats: {}, skills: [], abilities: [], traits: [], notes: '' },
-    smartBookkeepingActive: true,
-    surpriseDC: 95, encounterDC: 198, worldEventDC: 498,
-    canonStateActive: false, headerIndexActive: false, starterActive: false,
-    continuePromptActive: false, inventoryActive: false, characterProfileActive: false,
-    surpriseEngineActive: false, encounterEngineActive: true, worldEngineActive: true,
-    diceFairnessActive: true, sceneNote: '', sceneNoteActive: false, sceneNoteDepth: 3,
-    diceSystem: buildDefaultDiceSystem(),
-    worldVibe: '',
-    worldEventConfig: { initialDC: 498, dcReduction: 2, who: [] as string[], where: [] as string[], why: [] as string[], what: [] as string[] },
-    notebook: [],
-    notebookActive: true,
-    relationshipMemory: false,
-};
-
-export const DEFAULT_CONDENSER = { condensedUpToIndex: -1 };
+export { DEFAULT_CONTEXT, DEFAULT_CONDENSER } from './campaignKit';
+import { DEFAULT_CONTEXT, DEFAULT_CONDENSER, chunkMarkdownLore, applyEngineSeeds } from './campaignKit';
 
 export async function initializeCampaignState(params: {
     campaignId: string;
@@ -63,9 +38,7 @@ export async function initializeCampaignState(params: {
         // `status` tracks that the city was sacked in ch. 12).
         // Filters on category, not disabled, so seeding is unaffected. Re-enable per chunk
         // or in bulk from the Context Bank → World tab.
-        const chunks = importedWorld ? importedWorld.card.world.chunks : chunkLoreFile(loreText).map(c =>
-            c.category === 'character' || c.category === 'location' ? { ...c, disabled: true } : c
-        );
+        const chunks = importedWorld ? importedWorld.card.world.chunks : chunkMarkdownLore(loreText);
         await saveLoreChunks(campaignId, chunks);
 
         // Keep authored world-card keywords unchanged; enrich legacy Markdown only.
@@ -126,30 +99,9 @@ export async function initializeCampaignState(params: {
         const ctx = { ...DEFAULT_CONTEXT, ...(existingState?.context ?? {}) } as GameContext;
         if (rulesFile) ctx.rulesRaw = await rulesFile.text();
         if (lootTree) ctx.lootTree = lootTree;
-        if (seeds) {
-            ctx.surpriseConfig = {
-                ...ctx.surpriseConfig, initialDC: ctx.surpriseConfig?.initialDC ?? 95,
-                dcReduction: ctx.surpriseConfig?.dcReduction ?? 3,
-                types: seeds.surpriseTypes.length > 0 ? seeds.surpriseTypes : [...DEFAULT_SURPRISE_TYPES],
-                tones: seeds.surpriseTones.length > 0 ? seeds.surpriseTones : [...DEFAULT_SURPRISE_TONES],
-            };
-            ctx.encounterConfig = {
-                ...ctx.encounterConfig, initialDC: ctx.encounterConfig?.initialDC ?? 198,
-                dcReduction: ctx.encounterConfig?.dcReduction ?? 2,
-                types: seeds.encounterTypes.length > 0 ? seeds.encounterTypes : [...DEFAULT_ENCOUNTER_TYPES],
-                tones: seeds.encounterTones.length > 0 ? seeds.encounterTones : [...DEFAULT_ENCOUNTER_TONES],
-            };
-            ctx.worldEventConfig = {
-                ...ctx.worldEventConfig, initialDC: ctx.worldEventConfig?.initialDC ?? 498,
-                dcReduction: ctx.worldEventConfig?.dcReduction ?? 2,
-                who: seeds.worldWho.length > 0 ? seeds.worldWho : [...DEFAULT_WORLD_WHO],
-                where: seeds.worldWhere.length > 0 ? seeds.worldWhere : [...DEFAULT_WORLD_WHERE],
-                why: seeds.worldWhy.length > 0 ? seeds.worldWhy : [...DEFAULT_WORLD_WHY],
-                what: seeds.worldWhat.length > 0 ? seeds.worldWhat : [...DEFAULT_WORLD_WHAT],
-            };
-        }
+        const seeded = seeds ? applyEngineSeeds(ctx, seeds) : ctx;
         await saveCampaignState(campaignId, {
-            context: { ...DEFAULT_CONTEXT, ...ctx }, messages: existingState?.messages ?? [],
+            context: { ...DEFAULT_CONTEXT, ...seeded }, messages: existingState?.messages ?? [],
             condenser: { ...(existingState?.condenser ?? DEFAULT_CONDENSER) },
         });
     }

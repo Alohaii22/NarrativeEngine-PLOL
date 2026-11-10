@@ -13,6 +13,7 @@ export class EngineUnavailableError extends Error {}
 export function createEngineClient({
     baseUrl = process.env.NARRATIVE_ENGINE_URL || DEFAULT_ENGINE_URL,
     fetchImpl = globalThis.fetch,
+    ensureEngine = null,
 } = {}) {
     const root = baseUrl.replace(/\/+$/, '');
 
@@ -20,13 +21,20 @@ export function createEngineClient({
         const headers = { Accept: 'application/json' };
         if (body !== undefined) headers['Content-Type'] = 'application/json';
         if (method !== 'GET') headers['X-NE-Writer'] = 'mcp';
+        const send = () => fetchImpl(`${root}${path}`, {
+            method,
+            headers,
+            body: body === undefined ? undefined : JSON.stringify(body),
+        });
         let res;
         try {
-            res = await fetchImpl(`${root}${path}`, {
-                method,
-                headers,
-                body: body === undefined ? undefined : JSON.stringify(body),
-            });
+            try {
+                res = await send();
+            } catch (err) {
+                // Not running? Start it (engineLauncher.js) and try once more.
+                if (!ensureEngine || !(await ensureEngine())) throw err;
+                res = await send();
+            }
         } catch (err) {
             throw new EngineUnavailableError(
                 `Can't reach Narrative Engine at ${root} (${err?.message ?? err}). ` +
@@ -47,6 +55,9 @@ export function createEngineClient({
         baseUrl: root,
         listCampaigns: () => request('GET', '/api/campaigns'),
         getCampaign: (id) => request('GET', c(id)),
+        putCampaign: (id, meta) => request('PUT', c(id), meta),
+        putLore: (id, chunks) => request('PUT', `${c(id)}/lore`, chunks),
+        putLocations: (id, locations) => request('PUT', `${c(id)}/locations`, locations),
         getState: (id) => request('GET', `${c(id)}/state`),
         putState: (id, state) => request('PUT', `${c(id)}/state`, state),
         getLore: (id) => request('GET', `${c(id)}/lore`),

@@ -271,6 +271,24 @@ export async function updateCharacter(client, campaignId, patch = {}) {
         for (const [k, v] of Object.entries(patch.stats)) if (Number.isFinite(Number(v))) data.stats[k] = Number(v);
         log.push(`stats ${Object.keys(patch.stats).join(', ')}`);
     }
+    for (const f of ['name', 'race', 'class']) {
+        if (typeof patch[f] === 'string' && patch[f].trim()) {
+            data[f] = patch[f].trim();
+            if (f === 'name') {
+                context.playerCharacter = { ...(context.playerCharacter ?? { id: newId('pc'), aliases: '', faction: '', storyRelevance: 'Player character', status: '', voice: '', exampleOutput: '' }), name: data.name };
+            }
+            log.push(`${f} ${data[f]}`);
+        }
+    }
+    for (const f of ['appearance', 'personality']) {
+        if (typeof patch[f] === 'string' && patch[f].trim()) {
+            context.playerCharacter = { ...(context.playerCharacter ?? { id: newId('pc'), name: data.name || 'Hero' }), [f]: patch[f].trim() };
+            log.push(f);
+        }
+    }
+    if (Array.isArray(patch.skills)) { data.skills = patch.skills.map(String); log.push('skills'); }
+    if (Array.isArray(patch.abilities)) { data.abilities = patch.abilities.map(String); log.push('abilities'); }
+    if (Array.isArray(patch.traits)) { data.traits = patch.traits.map(String); log.push('traits'); }
     if (typeof patch.notes === 'string') { data.notes = patch.notes; log.push('notes'); }
     if (patch.condition !== undefined && context.playerCharacter) {
         if (!NPC_CONDITIONS.includes(patch.condition)) throw new Error(`condition must be one of ${NPC_CONDITIONS.join(', ')}`);
@@ -359,5 +377,32 @@ export async function recordTurn(client, campaignId, { playerAction, narration, 
         narration: gm,
         character: characterSheet(state.context),
         notebook: (state.context?.notebook ?? []).map((n) => n.text),
+    };
+}
+
+// ── New campaigns ───────────────────────────────────────────────────────
+
+/**
+ * Create a campaign from a bundled world, built by the same code as the
+ * app's New Campaign form (src/services/campaignKit.ts).
+ * `kit` is the loaded campaign kit; `files` holds the texts to build from.
+ */
+export async function createCampaign(client, kit, { name, loreText, rulesText, lootText, starterText }) {
+    const built = kit.buildCampaignFromMarkdown({ loreText, rulesText, lootText });
+    const id = newId('cmp').replace(/[^a-zA-Z0-9_-]/g, '');
+    const now = Date.now();
+    const context = { ...built.context, starter: starterText ?? '', starterActive: !!starterText };
+    await client.putCampaign(id, { id, name, coverImage: '', createdAt: now, lastPlayedAt: now });
+    await client.putState(id, { context, messages: [], condenser: built.condenser, pinnedExcerpts: [] });
+    await client.putLore(id, built.chunks);
+    if (built.npcs.length) await client.putNpcs(id, built.npcs);
+    if (built.locations.length) await client.putLocations(id, built.locations);
+    return {
+        id,
+        name,
+        loreEntries: built.chunks.length,
+        npcs: built.npcs.length,
+        locations: built.locations.length,
+        warnings: built.warnings,
     };
 }

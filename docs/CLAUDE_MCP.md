@@ -16,17 +16,36 @@ plays.
  Narrative Engine UI  ◀── polls every 2.5 s, reloads when Claude changes the campaign ──┘
 ```
 
+## One-click start
+
+1. Install [Claude Desktop](https://claude.ai/download) and [Node.js LTS](https://nodejs.org/) if you don't have them.
+2. Double-click **`Play_With_Claude.bat`** (Windows) or **`Play_With_Claude.command`** (macOS; on Linux run `./Play_With_Claude.command`).
+3. In Claude Desktop, start a new chat and type **"Let's play Narrative Engine"**. Allow the `narrative-engine` tools when asked.
+
+Claude lists your campaigns, or offers the bundled worlds and starts a new campaign, walks you through character creation, and runs the game.
+
+The first run installs everything, which takes a few minutes. After that:
+- Claude Desktop is connected to Narrative Engine (your config is backed up first; other servers are kept).
+- Narrative Engine starts, and a browser tab shows your campaign live.
+- Claude Desktop restarts if needed so it picks up the change.
+
+If Narrative Engine isn't running when Claude needs it, it starts in the background on its own.
+
+The manual steps below are only needed if you want to set things up by hand.
+
 ## What Claude can do
 
 | Tool | What it does | Panel in chat |
 |---|---|---|
 | `list_campaigns` | Lists your campaigns | |
+| `list_worlds` | The ready-made worlds in `Example_Setup/`, each with a pitch | |
+| `create_campaign` | Starts a new campaign from a world, built exactly like the app's New Campaign form | Campaign card |
 | `open_campaign` | Loads the GM rules, world overview, hero, NPCs, notebook and recent turns | Campaign card |
 | `recall_lore` | Searches world lore (semantic search plus keywords) | |
 | `recall_memory` | Searches every past scene in the archive | |
 | `get_npcs` / `update_npc` | Reads and updates the NPC ledger | |
 | `roll_dice` | Real dice: `d20`, `2d6+3`, `4d6kh3`, `1d20+5 adv` | Dice tray with **Roll again** |
-| `show_character` / `update_character` | HP/MP, level, stats, condition, inventory | Character sheet with HP buttons |
+| `show_character` / `update_character` | Character creation (name, race, class, looks, skills), HP/MP, level, stats, condition, inventory | Character sheet with HP buttons |
 | `update_notebook` | Short-lived scene state (timers, positions, effects) | |
 | `record_turn` | Saves the turn to the chat and long-term memory | Turn summary |
 
@@ -44,13 +63,14 @@ for the app itself.
 npm run dev
 ```
 
-The MCP server talks to it on `http://127.0.0.1:3001`, so it must be running
-whenever you play. Create your campaign in the app first (**New Campaign**);
-Claude plays existing campaigns.
+The MCP server talks to it on `http://127.0.0.1:3001`. If it's not running, the
+MCP server starts `server.js` in the background (log: `server/mcp/.cache/engine.log`;
+set `NE_AUTOSTART=0` to turn this off). Run `npm run dev` yourself when you also
+want the live display in the browser.
 
 ### 2. Add the server to Claude Desktop
 
-Open Claude Desktop → **Settings → Developer → Edit Config**. That opens
+Run `node scripts/install-claude-gm.mjs` to do this automatically, or by hand: open Claude Desktop → **Settings → Developer → Edit Config**. That opens
 `claude_desktop_config.json`:
 
 - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
@@ -115,6 +135,9 @@ choose "Always allow".
   keyword search, and scenes archived meanwhile are re-indexed later.
 - **Panels need Claude Desktop or claude.ai.** Other clients get the same
   information as text.
+- **Engine tags in rulesets:** rulesets written for the app mention engine tags
+  and automatic rolls. Through MCP, Claude handles those itself with real dice
+  rolls and never prints tags.
 - **Updating panel code:** Claude Desktop caches panels aggressively. After
   changing `server/mcp/views.js`, fully restart Claude Desktop.
 
@@ -123,6 +146,11 @@ choose "Always allow".
 - `server/mcp/index.js`: entry point (stdio, or `--http`)
 - `server/mcp/server.js`: tools, panel resource, `run_campaign` prompt, GM instructions
 - `server/mcp/gm.js`: game logic (recall, NPCs, character, notebook, turns)
+- `server/mcp/worlds.js`: the catalog of bundled worlds and rulesets
+- `server/mcp/kit.js`: compiles `src/services/campaignKit.ts` for Node, so campaigns are built by the app's own code
+- `server/mcp/engineLauncher.js`: starts the engine when it's not running
+- `scripts/install-claude-gm.mjs`: registers the server with Claude Desktop
+- `Play_With_Claude.bat` / `Play_With_Claude.command`: the one-click launchers
 - `server/mcp/dice.js`: dice notation
 - `server/mcp/views.js`: the inline panel (MCP Apps)
 - `server/mcp/engineClient.js`: HTTP client for the engine; tags writes with `X-NE-Writer: mcp`

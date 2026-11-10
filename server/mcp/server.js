@@ -10,16 +10,21 @@ import { z } from 'zod';
 import { rollDice, describeRoll } from './dice.js';
 import * as gm from './gm.js';
 import { PANEL_URI, panelHtml } from './views.js';
+import { listWorlds, findWorld, listRulesets, readRuleset, worldBlurb } from './worlds.js';
+import { loadCampaignKit } from './kit.js';
+import fs from 'fs';
 
 export const SERVER_INSTRUCTIONS = `You are the Game Master for a Narrative Engine campaign. The engine holds the world: rules, lore, NPCs, the hero's sheet and every past scene. You narrate; the engine remembers.
 
 How to run a session:
-1. Call list_campaigns, then open_campaign with the player's choice. Treat the returned "rules" as your GM operating manual (tone, format, difficulty, dice protocol) and follow it.
+1. Call list_campaigns. To continue, open_campaign with the player's choice. To start fresh, call list_worlds, let the player pick a world, then create_campaign (it opens the new campaign for you). Treat the returned "rules" as your GM operating manual (tone, format, difficulty, dice protocol) and follow it. For a new campaign, follow the opening prompt: usually character creation first, saved with update_character (name, race, class, stats, HP, gear).
 2. Each turn: read the player's action. Before narrating, recall what you need — recall_lore for world facts, recall_memory for past events, get_npcs for anyone who appears. Never invent facts that contradict recalled lore.
 3. Resolve uncertain actions with roll_dice; never fake a roll.
 4. Narrate the outcome to the player.
 5. Then ALWAYS call record_turn with the player's action and your exact narration, so the turn is saved to the campaign and its long-term memory. A turn that is not recorded is forgotten.
-6. Keep state true: update_character for HP, items, level; update_npc when an NPC is met or changes; update_notebook for short-lived scene state (timers, positions, ongoing effects).`;
+6. Keep state true: update_character for HP, items, level; update_npc when an NPC is met or changes; update_notebook for short-lived scene state (timers, positions, ongoing effects).
+
+You are also the engine. Rulesets written for the Narrative Engine app mention engine tags, injected blocks ([SURPRISE], [ENCOUNTER], [TRAVEL], dice tags, PLAY AS directives) and automatic rolls that the app normally produces. Here nothing processes tags: never print raw tags or engine syntax to the player. Where the rules say the engine rolls or injects something, do it yourself with roll_dice and plain narration, and occasionally introduce small unprompted events the way the rules describe.`;
 
 const campaignId = z.string().min(1).describe('Campaign id from list_campaigns');
 const meta = { ui: { resourceUri: PANEL_URI } };
@@ -83,7 +88,7 @@ export function buildServer(client) {
         annotations: { readOnlyHint: true },
     }, safe(async () => {
         const list = await gm.listCampaigns(client);
-        if (list.length === 0) return ok('No campaigns yet. Create one in the Narrative Engine app (New Campaign), then come back.');
+        if (list.length === 0) return ok('No campaigns yet. Call list_worlds and offer the player a world to start with create_campaign.');
         return ok(list.map((c) => `- ${c.name} (id: ${c.id})${c.lastPlayedAt ? ` — last played ${c.lastPlayedAt.slice(0, 10)}` : ''}`).join('\n'), { campaigns: list });
     }));
 
@@ -153,6 +158,45 @@ export function buildServer(client) {
         return ok(`${r.created ? 'Added' : 'Updated'} ${r.name}${r.changed.length ? ` (${r.changed.join(', ')})` : ''}.`, r);
     }));
 
+    server.registerTool('list_worlds', {
+        title: 'List worlds',
+        description: 'List the ready-made worlds that ship with Narrative Engine (fantasy, cyberpunk, zombie, superhero, franchise worlds and more), each with a short pitch, plus the available GM rulesets. Use to offer the player a new campaign.',
+        inputSchema: {},
+        annotations: { readOnlyHint: true },
+    }, safe(async () => {
+        const worlds = listWorlds().map((w) => ({ id: w.id, name: w.name, pitch: worldBlurb(w), hasStarter: !!w.starterFile, hasLoot: !!w.lootFile, ownRules: !!w.rulesFile }));
+        if (worlds.length === 0) return ok('No worlds found in Example_Setup/World_compendium.');
+        const text = worlds.map((w) => `- **${w.name}** (id: ${w.id})${w.ownRules ? ' [own GM rules]' : ''}: ${w.pitch}`).join('\n')
+            + `\n\nGM rulesets (optional; default is the world's own rules or AI_GM_OS v5.0 Immersive): ${listRulesets().join(', ')}`;
+        return ok(text, { worlds, rulesets: listRulesets() });
+    }));
+
+    registerAppTool(server, 'create_campaign', {
+        title: 'Create campaign',
+        description: 'Start a new campaign from a ready-made world (see list_worlds). Builds the lore, NPCs, locations and GM rules exactly like the app\'s New Campaign form, then opens it.',
+        inputSchema: {
+            world: z.string().min(2).describe('World id or name from list_worlds'),
+            name: z.string().min(1).max(80).optional().describe('Campaign name (defaults to the world name)'),
+            ruleset: z.string().optional().describe('Part of a ruleset file name to override the default, e.g. "v3.2" for easy difficulty'),
+        },
+        _meta: meta,
+    }, safe(async ({ world: worldQuery, name, ruleset }) => {
+        const world = findWorld(worldQuery);
+        if (!world) throw new Error(`No world matching "${worldQuery}". Call list_worlds for the options.`);
+        const rules = readRuleset(world, ruleset);
+        const kit = await loadCampaignKit();
+        const created = await gm.createCampaign(client, kit, {
+            name: name?.trim() || world.name,
+            loreText: fs.readFileSync(world.loreFile, 'utf-8'),
+            rulesText: rules.text,
+            lootText: world.lootFile ? fs.readFileSync(world.lootFile, 'utf-8') : undefined,
+            starterText: world.starterFile ? fs.readFileSync(world.starterFile, 'utf-8') : undefined,
+        });
+        const b = await gm.openCampaign(client, created.id);
+        const header = `Created "${created.name}" from ${world.name} with ${rules.name}: ${created.loreEntries} lore entries, ${created.npcs} NPCs, ${created.locations} locations.`;
+        return ok(`${header}\n\n${briefingText(b)}`, { view: 'campaign', campaignId: created.id, created, ...b });
+    }));
+
     registerAppTool(server, 'roll_dice', {
         title: 'Roll dice',
         description: 'Roll dice for real and show the roll. Notation: d20, 2d6+3, 4d6kh3 (keep highest 3), 1d20+5 adv / dis. Use for every uncertain outcome.',
@@ -179,9 +223,17 @@ export function buildServer(client) {
 
     registerAppTool(server, 'update_character', {
         title: 'Update character',
-        description: 'Change the hero\'s sheet: HP (hpDelta for damage/healing), MP, level, stats, condition, notes, and inventory (add/remove/equip/unequip).',
+        description: 'Create or change the hero\'s sheet: name, race, class, appearance, personality, skills/abilities/traits, HP (hpDelta for damage/healing, hpMax/hpSet), MP, level, stats, condition, notes, and inventory (add/remove/equip/unequip).',
         inputSchema: {
             campaignId,
+            name: z.string().optional().describe('Hero name (character creation)'),
+            race: z.string().optional(),
+            class: z.string().optional().describe('Class, role or archetype'),
+            appearance: z.string().optional(),
+            personality: z.string().optional(),
+            skills: z.array(z.string()).optional().describe('Replaces the skill list'),
+            abilities: z.array(z.string()).optional().describe('Replaces the ability list'),
+            traits: z.array(z.string()).optional().describe('Replaces the trait list'),
             hpDelta: z.number().int().optional().describe('Negative for damage, positive for healing'),
             hpSet: z.number().int().min(0).optional(),
             hpMax: z.number().int().min(1).optional(),

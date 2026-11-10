@@ -19,6 +19,8 @@ No cloud. No subscription. Your campaigns stay on your machine.
 
 **New in 2.0** — a frozen [mod API](docs/MODDING.md) with an **Extensions** tab, a pixel-art [World Map](#world-map-extension--work-in-progress), an [image gallery with vision recall](#images-vision--the-gallery), a [Location Ledger](#location-ledger), and a translated interface.
 
+> 🎲 **Play with Claude as your GM, no API key:** double-click `Play_With_Claude.bat` (Windows) or `Play_With_Claude.command` (macOS/Linux). [How it works](docs/CLAUDE_MCP.md)
+
 ---
 
 ## Getting Started
@@ -135,7 +137,9 @@ Editing an existing campaign re-opens the same form. Uploading a new Lore, Rules
 
 ## Claude as your Game Master (no API key)
 
-Run a campaign with Claude as the GM from the **Claude desktop app**, using your Claude subscription. Claude narrates in chat, with inline dice, character and turn panels. Narrative Engine keeps the rules, lore, NPCs and long-term memory, and its window updates live as you play. Setup takes about two minutes: see **[docs/CLAUDE_MCP.md](docs/CLAUDE_MCP.md)**.
+Run a campaign with Claude as the GM from the **Claude desktop app**, using your Claude subscription. Claude narrates in chat, with inline dice, character and turn panels. Narrative Engine keeps the rules, lore, NPCs and long-term memory, and its window updates live as you play.
+
+**One click:** double-click **`Play_With_Claude.bat`** (Windows) or **`Play_With_Claude.command`** (macOS/Linux), then type *"Let's play Narrative Engine"* in Claude Desktop. Details: **[docs/CLAUDE_MCP.md](docs/CLAUDE_MCP.md)**.
 
 ---
 
