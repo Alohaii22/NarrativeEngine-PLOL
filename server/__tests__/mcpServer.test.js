@@ -74,9 +74,9 @@ describe('MCP server over the protocol', () => {
     });
     afterEach(() => mcp.close());
 
-    it('exposes the 13 tools and the run_campaign prompt', async () => {
+    it('exposes the 14 tools and the run_campaign prompt', async () => {
         const { tools } = await mcp.client.listTools();
-        expect(tools.map((t) => t.name).sort()).toEqual(['create_campaign', 'get_npcs', 'list_campaigns', 'list_worlds', 'open_campaign', 'recall_lore',
+        expect(tools.map((t) => t.name).sort()).toEqual(['close_chapter', 'create_campaign', 'get_npcs', 'list_campaigns', 'list_worlds', 'open_campaign', 'recall_lore',
             'recall_memory', 'record_turn', 'roll_dice', 'show_character', 'update_character', 'update_notebook', 'update_npc']);
         const prompt = await mcp.client.getPrompt({ name: 'run_campaign', arguments: { campaign: 'Ashfall' } });
         expect(prompt.messages[0].content.text).toContain('"Ashfall"');
@@ -85,7 +85,7 @@ describe('MCP server over the protocol', () => {
 
     it('tells Claude how to GM in the instructions, the prompt and every briefing', async () => {
         // Clients differ in what reaches the model; the briefing always does.
-        for (const must of ['record_turn', 'roll_dice', 'recall_lore', 'recall_memory', 'update_character', 'update_npc', 'update_notebook']) {
+        for (const must of ['record_turn', 'roll_dice', 'recall_lore', 'recall_memory', 'update_character', 'update_npc', 'update_notebook', 'close_chapter', '📅', '📍', '👥']) {
             expect(GM_LOOP).toContain(must);
         }
         expect(SERVER_INSTRUCTIONS).toContain(GM_LOOP);

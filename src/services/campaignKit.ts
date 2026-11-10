@@ -140,3 +140,8 @@ export function mergeCards(built: BuiltCampaign, cards: PreparedCard[], includeC
     const chunks = [...built.chunks.filter(c => !extra.some(e => e.id === c.id)), ...extra];
     return { ...built, npcs, chunks };
 }
+
+// ── Scene header (Claude-as-GM turns) ───────────────────────────────────
+
+/** The app's own `📍` header anchoring, so turns Claude records move the current place exactly as app turns do. */
+export { anchorSceneLocation, parseLocationHeader } from './locationHeader';

@@ -15,6 +15,8 @@ const MAX_OVERVIEW_CHARS = 8_000;
 const MAX_SCENE_CHARS = 1_800;
 const MAX_RECENT_TURN_CHARS = 1_200;
 const MAX_LAST_TURN_CHARS = 4_000;
+const MAX_BRIEFING_CHAPTERS = 6;
+const MAX_CHAPTER_SUMMARY_CHARS = 700;
 const NPC_TEXT_FIELDS = ['aliases', 'appearance', 'faction', 'storyRelevance', 'status', 'voice', 'personality'];
 const NPC_CONDITIONS = ['healthy', 'wounded', 'critical', 'dead'];
 const INVENTORY_CATEGORIES = ['weapon', 'armor', 'consumable', 'currency', 'key', 'misc', 'equipped'];
@@ -119,12 +121,14 @@ function npcSummary(npc) {
 }
 
 export async function openCampaign(client, campaignId, { recentTurns = 6 } = {}) {
-    const [meta, state, lore, npcs, archive] = await Promise.all([
+    const [meta, state, lore, npcs, archive, locations, chapters] = await Promise.all([
         client.getCampaign(campaignId),
         client.getState(campaignId),
         client.getLore(campaignId),
         client.getNpcs(campaignId),
         client.getArchiveIndex(campaignId).catch(rethrowIfDown),
+        client.getLocations(campaignId).catch(rethrowIfDown),
+        client.getChapters(campaignId).catch(rethrowIfDown),
     ]);
     if (!meta && !state) throw new Error(`No campaign "${campaignId}". Call list_campaigns to see the ids.`);
     const context = state?.context ?? {};
@@ -155,6 +159,9 @@ export async function openCampaign(client, campaignId, { recentTurns = 6 } = {})
         notebook: (context.notebook ?? []).map((n) => n.text),
         sceneNote: context.sceneNoteActive ? context.sceneNote || '' : '',
         npcs: (npcs ?? []).filter((n) => !n.isPC).map(npcSummary).slice(0, 60),
+        location: currentLocation(context, locations),
+        places: (Array.isArray(locations) ? locations : []).map((l) => l.name).slice(0, 40),
+        storySoFar: storySoFar(chapters),
         scenesArchived: Array.isArray(archive) ? archive.length : 0,
         turnsPlayed: messages.filter((m) => m.role === 'assistant').length,
         recentTurns: recent,
@@ -422,21 +429,28 @@ async function updateNotebookNow(client, campaignId, actions) {
  * the GM's narration become chat messages, and the scene goes into the
  * long-term archive (keyword index + vector embedding) so recall finds it later.
  */
-export function recordTurn(client, campaignId, turn = {}) {
+export function recordTurn(client, campaignId, turn = {}, { kit } = {}) {
     const gm = String(turn.narration ?? '').trim();
     if (!gm) return Promise.reject(new Error('narration is required: pass the exact narration you showed the player'));
-    return serialize(campaignId, () => recordTurnNow(client, campaignId, { ...turn, narration: gm }));
+    if ((turn.events ?? []).length > MAX_TURN_EVENTS) return Promise.reject(new Error(`At most ${MAX_TURN_EVENTS} timeline events per turn`));
+    return serialize(campaignId, () => recordTurnNow(client, campaignId, { ...turn, narration: gm }, kit));
 }
 
-async function recordTurnNow(client, campaignId, { playerAction, narration: gm, importance }) {
+async function recordTurnNow(client, campaignId, { playerAction, narration: gm, importance, events = [] }, kit) {
     const player = String(playerAction ?? '').trim();
     const state = await requireState(client, campaignId);
+    const context = state.context ?? (state.context = {});
+    let location = null;
+    let timeline = { added: 0, failed: 0 };
     const result = (sceneId, duplicate) => ({
         sceneId: sceneId ?? null,
         turnNumber: (state.messages ?? []).filter((m) => m.role === 'assistant').length,
         duplicate,
-        character: characterSheet(state.context),
-        notebook: (state.context?.notebook ?? []).map((n) => n.text),
+        location,
+        timelineEvents: timeline.added,
+        ...(timeline.failed ? { timelineFailed: timeline.failed } : {}),
+        character: characterSheet(context),
+        notebook: (context.notebook ?? []).map((n) => n.text),
     });
 
     // A retried call (a timeout, "did that save?") must not write the turn twice.
@@ -452,6 +466,15 @@ async function recordTurnNow(client, campaignId, { playerAction, narration: gm, 
         console.error('[MCP] archive append failed:', err.message);
     }
 
+    if (events.length) timeline = await addTimelineEvents(client, campaignId, events, sceneId);
+    try {
+        location = await anchorLocation(client, kit, campaignId, context, gm);
+    } catch (err) {
+        if (err instanceof EngineUnavailableError) throw err;
+        // Location tracking is a bonus; the turn itself must still save.
+        console.error('[MCP] location header not applied:', err.message);
+    }
+
     const now = Date.now();
     const messages = state.messages ?? (state.messages = []);
     if (player) messages.push({ id: newId('msg'), role: 'user', content: player, timestamp: now });
@@ -459,6 +482,123 @@ async function recordTurnNow(client, campaignId, { playerAction, narration: gm, 
     await saveState(client, campaignId, state);
 
     return result(sceneId, false);
+}
+
+// ── Scene location (the 📍 header) ──────────────────────────────────────
+
+/**
+ * Move the current place from the narration's `📍` header with the app's own
+ * anchoring (src/services/locationHeader.ts, via the campaign kit), the same
+ * thing the app's location-header track does after its own turns. Mutates
+ * `context` (saved by the caller) and saves the Places ledger when it changes.
+ * Returns null when the narration has no usable header.
+ */
+async function anchorLocation(client, kit, campaignId, context, narration) {
+    if (typeof kit?.anchorSceneLocation !== 'function') return null;
+    const stored = await client.getLocations(campaignId);
+    const ledger = Array.isArray(stored) ? stored.map((l) => ({ ...l, features: [...(l.features ?? [])] })) : [];
+    const { outcome, created } = kit.anchorSceneLocation(narration, ledger, context.currentPlaceId ?? null);
+    if (outcome.kind !== 'resolved' && outcome.kind !== 'feature-only') return null;
+
+    let ledgerChanged = false;
+    if (created) { ledger.push(created); ledgerChanged = true; }
+    if (outcome.kind === 'resolved') context.currentPlaceId = outcome.placeId;
+    context.currentFeature = outcome.feature ?? null;
+    const place = ledger.find((l) => l.id === context.currentPlaceId);
+    if (outcome.appendFeature && outcome.feature && place) {
+        place.features.push(outcome.feature);
+        place.lastSeenScene = String(Date.now());
+        ledgerChanged = true;
+    }
+    if (ledgerChanged) await client.putLocations(campaignId, ledger);
+    return { place: place?.name ?? null, feature: context.currentFeature, newPlace: created?.name ?? null };
+}
+
+function currentLocation(context, ledger) {
+    const place = (ledger ?? []).find((l) => l.id === context?.currentPlaceId);
+    if (!place) return null;
+    return { place: place.name, feature: context.currentFeature || null };
+}
+
+// ── Timeline ────────────────────────────────────────────────────────────
+
+/** The predicates the engine's timeline accepts (server/services/llmProxy.js). */
+export const TIMELINE_PREDICATES = ['status', 'located_in', 'holds', 'allied_with', 'enemy_of', 'killed_by', 'controls', 'relationship_to', 'seeks', 'knows_about', 'destroyed', 'misc'];
+const MAX_TURN_EVENTS = 5;
+
+/**
+ * The app extracts timeline events from each scene with its own AI model;
+ * with Claude as the GM, Claude names them and they are filed the same way
+ * (same scene and chapter ids), so the Timeline panel and recall see them.
+ */
+async function addTimelineEvents(client, campaignId, events, sceneId) {
+    let chapterId;
+    try {
+        const chapters = await client.getChapters(campaignId);
+        chapterId = (chapters ?? []).find((c) => !c.sealedAt)?.chapterId ?? (chapters ?? []).at(-1)?.chapterId;
+    } catch (err) {
+        if (err instanceof EngineUnavailableError) throw err;
+    }
+    let added = 0;
+    let failed = 0;
+    for (const e of events) {
+        try {
+            await client.addTimelineEvent(campaignId, {
+                subject: e.subject, predicate: e.predicate, object: e.object,
+                summary: e.summary || `${e.subject} ${e.predicate} ${e.object}`,
+                importance: e.importance ?? 5,
+                ...(sceneId ? { sceneId } : {}),
+                ...(chapterId ? { chapterId } : {}),
+            });
+            added++;
+        } catch (err) {
+            if (err instanceof EngineUnavailableError) throw err;
+            failed++;
+            console.error('[MCP] timeline event not saved:', err.message);
+        }
+    }
+    return { added, failed };
+}
+
+// ── Chapters ────────────────────────────────────────────────────────────
+
+const CHAPTER_LIST_FIELDS = ['majorEvents', 'unresolvedThreads', 'npcs', 'themes', 'keywords'];
+
+/**
+ * Close the open chapter, as the app's chapter auto-seal does (which needs the
+ * app's own AI model for the summary): Claude provides the title and summary.
+ * The engine opens the next chapter itself.
+ */
+export function closeChapter(client, campaignId, input = {}) {
+    const title = String(input.title ?? '').trim();
+    const summary = String(input.summary ?? '').trim();
+    if (!title || !summary) return Promise.reject(new Error('close_chapter needs a title and a summary'));
+    return serialize(campaignId, async () => {
+        const chapters = (await client.getChapters(campaignId)) ?? [];
+        const open = chapters.find((c) => !c.sealedAt);
+        if (!open || !(open.sceneCount > 0)) {
+            throw new Error('The open chapter has no recorded scenes yet, so there is nothing to close. Record some turns first.');
+        }
+        const sealed = await client.sealChapter(campaignId, title);
+        const chapterId = sealed?.sealedChapter?.chapterId ?? open.chapterId;
+        const patch = { title, summary, synopsis: summary };
+        if (input.tone) patch.tone = String(input.tone);
+        for (const k of CHAPTER_LIST_FIELDS) if (Array.isArray(input[k])) patch[k] = input[k].map(String).filter(Boolean).slice(0, 12);
+        await client.patchChapter(campaignId, chapterId, patch);
+        return {
+            chapterId,
+            title,
+            sceneCount: open.sceneCount,
+            nextChapterId: sealed?.newOpenChapter?.chapterId ?? null,
+        };
+    });
+}
+
+function storySoFar(chapters) {
+    return (chapters ?? [])
+        .filter((c) => c.sealedAt && (c.summary || c.synopsis))
+        .slice(-MAX_BRIEFING_CHAPTERS)
+        .map((c) => ({ title: c.title, summary: clip(c.summary || c.synopsis, MAX_CHAPTER_SUMMARY_CHARS) }));
 }
 
 // ── New campaigns ───────────────────────────────────────────────────────

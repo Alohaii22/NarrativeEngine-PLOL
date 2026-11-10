@@ -26,7 +26,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MCP_ENTRY = path.join(REPO_ROOT, 'server', 'mcp', 'index.js');
-const EXPECTED_TOOLS = ['create_campaign', 'get_npcs', 'list_campaigns', 'list_worlds', 'open_campaign', 'recall_lore',
+const EXPECTED_TOOLS = ['close_chapter', 'create_campaign', 'get_npcs', 'list_campaigns', 'list_worlds', 'open_campaign', 'recall_lore',
     'recall_memory', 'record_turn', 'roll_dice', 'show_character', 'update_character', 'update_notebook', 'update_npc'];
 
 const argv = process.argv.slice(2);
@@ -142,7 +142,7 @@ async function main() {
     try {
         step('Server surface');
         const tools = (await gm.client.listTools()).tools;
-        check('13 tools registered', JSON.stringify(tools.map((t) => t.name).sort()) === JSON.stringify(EXPECTED_TOOLS), tools.map((t) => t.name).join(','));
+        check(`${EXPECTED_TOOLS.length} tools registered`, JSON.stringify(tools.map((t) => t.name).sort()) === JSON.stringify(EXPECTED_TOOLS), tools.map((t) => t.name).join(','));
         check('every tool has a description', tools.every((t) => (t.description ?? '').length > 20));
         const prompts = (await gm.client.listPrompts()).prompts;
         check('run_campaign prompt registered', prompts.some((p) => p.name === 'run_campaign'));
@@ -187,17 +187,23 @@ async function main() {
         check('recall_lore returns lore', !lore.isError && (lore.data?.headers?.length ?? 0) > 0 && /^### /.test(lore.text), lore.text.slice(0, 120));
         const noLore = await gm.call('recall_lore', { campaignId, query: 'zzqx vrrbl' });
         check('recall_lore with no match says so instead of failing', !noLore.isError && /No lore found/.test(noLore.text), noLore.text.slice(0, 120));
-        const t0 = await gm.call('record_turn', { campaignId, playerAction: '', narration: `Rain hammers the slate roofs as ${HERO} steps off the ferry, satchel held tight. A lantern swings over the Scribe Hall door.` });
+        const t0 = await gm.call('record_turn', { campaignId, playerAction: '', narration: `📅 Evening | 📍 Port Vell - the slate steps | 👥 Nobody
+
+Rain hammers the slate roofs as ${HERO} steps off the ferry, satchel held tight. A lantern swings over the Scribe Hall door.` });
         check('opening scene recorded as turn 1', !t0.isError && t0.data?.turnNumber === 1, t0.text);
         check('opening scene archived', !!t0.data?.sceneId);
+        check('📍 header: a new place is added and becomes the current place', t0.data?.location?.place === 'Port Vell' && t0.data?.location?.newPlace === 'Port Vell' && t0.data?.location?.feature === 'the slate steps', JSON.stringify(t0.data?.location));
 
         // Turn 2: dice + new NPC
         const roll = await gm.call('roll_dice', { expression: '1d20+3', label: 'Persuasion DC 12' });
         check('roll_dice returns a real total', !roll.isError && Number.isInteger(roll.data?.total) && roll.data.total >= 4 && roll.data.total <= 23, roll.text);
         const npc = await gm.call('update_npc', { campaignId, name: NPC, appearance: 'Tall archivist with a silver monocle', personality: 'Dry, exacting', status: 'Guarding the Scribe Hall archive', faction: 'Scribe Hall' });
         check('update_npc adds a new NPC', !npc.isError && npc.data?.created === true, npc.text);
-        const t1 = await gm.call('record_turn', { campaignId, playerAction: 'I ask the archivist for the sealed ledger.', narration: `${NPC} adjusts her monocle. "The ${MARKER} ledger is not lent to couriers," she says, but her eyes linger on your satchel seal.`, importance: 6 });
+        const t1 = await gm.call('record_turn', { campaignId, playerAction: 'I ask the archivist for the sealed ledger.', narration: `📅 Evening | 📍 Scribe Hall - reading room | 👥 ${NPC}
+
+${NPC} adjusts her monocle. "The ${MARKER} ledger is not lent to couriers," she says, but her eyes linger on your satchel seal.`, importance: 6 });
         check('turn 2 recorded', t1.data?.turnNumber === 2, t1.text);
+        check('📍 header: the hero moves to the next place', t1.data?.location?.place === 'Scribe Hall' && t1.data?.location?.feature === 'reading room', JSON.stringify(t1.data?.location));
 
         // Turn 3: parallel state writes (Claude often sends tool calls together)
         const [nb, dmg, t2] = await Promise.all([
@@ -231,8 +237,12 @@ async function main() {
         check('recording the same turn twice does not duplicate it', !dup.isError && dup.data?.turnNumber === 5, dup.text);
 
         // Turn 6
-        const t5 = await gm.call('record_turn', { campaignId, playerAction: 'I take the ledger and head for the roof.', narration: 'Bells begin to ring below. You climb into the rain with the ledger under your coat.', importance: 8 });
+        const t5 = await gm.call('record_turn', { campaignId, playerAction: 'I take the ledger and head for the roof.', narration: 'Bells begin to ring below. You climb into the rain with the ledger under your coat.', importance: 8,
+            events: [{ subject: HERO, predicate: 'holds', object: `the ${MARKER} ledger`, summary: `${HERO} stole the ${MARKER} ledger from the Scribe Hall vault.`, importance: 8 }] });
         check('turn 6 recorded', t5.data?.turnNumber === 6, t5.text);
+        check('timeline event saved with the turn', t5.data?.timelineEvents === 1, t5.text);
+        const early = await gm.call('close_chapter', { campaignId, title: 'The Vault', summary: `${HERO} talked past ${NPC}, slipped into the Scribe Hall vault and stole the ${MARKER} ledger.`, unresolvedThreads: ['Who rang the bells?'] });
+        check('close_chapter seals the chapter', !early.isError && early.data?.sceneCount === 6 && !!early.data?.nextChapterId, early.text);
 
         step('Error paths');
         const badRoll = await gm.call('roll_dice', { expression: 'banana' });
@@ -275,6 +285,13 @@ async function main() {
         check('reopen: inventory persisted', re.data?.character?.inventory?.some((i) => i.name === 'Vault key') && re.data?.character?.inventory?.find((i) => i.name === 'Healing draught')?.qty === 1);
         check('reopen: notebook persisted', re.data?.notebook?.includes('Inside the vault; door ajar'));
         check('reopen: no opening prompt once play has started', !/## Opening prompt/.test(re.text));
+        check('reopen: briefing says where the hero is', /## Where the hero is\s+Scribe Hall - reading room/.test(re.text));
+        check('reopen: briefing carries the story so far', /## Story so far[\s\S]*The Vault/.test(re.text));
+        const api = (p) => fetch(`${engineUrl}/api/campaigns/${campaignId}${p}`).then((r) => r.json());
+        const [places, timeline, chapters] = await Promise.all([api('/locations'), api('/timeline'), api('/archive/chapters')]);
+        check('engine: Places has the new places', ['Port Vell', 'Scribe Hall'].every((n) => places.some((l) => l.name === n)), places.map((l) => l.name).join(', '));
+        check('engine: timeline has the event under scene 006', timeline.some((e) => e.predicate === 'holds' && e.sceneId === '006' && /ledger/.test(e.object)), JSON.stringify(timeline).slice(0, 200));
+        check('engine: chapter 1 sealed with the summary, chapter 2 open', chapters[0]?.sealedAt && chapters[0]?.title === 'The Vault' && /stole/.test(chapters[0]?.summary) && chapters.some((c) => !c.sealedAt), JSON.stringify(chapters.map((c) => [c.chapterId, c.title, !!c.sealedAt])));
         const who = await gm.call('get_npcs', { campaignId, names: [NPC] });
         check('reopen: NPC persisted with latest status', /Searching the hall/.test(who.text), who.text.slice(0, 200));
         const sheet = await gm.call('show_character', { campaignId });

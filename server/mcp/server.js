@@ -26,11 +26,11 @@ import fs from 'fs';
 export const GM_LOOP = `Every turn, in this order:
 1. LOOK UP before you write. recall_lore for any place, faction, power, creature or custom the world might define; recall_memory when the past matters (a returning NPC, a promise, "last time"); get_npcs for named NPCs entering the scene. What you recall is canon: never contradict it, and never invent canon you could have looked up. If nothing comes back, improvise small details that fit.
 2. ROLL when the outcome is uncertain and failure would matter: call roll_dice before you write the outcome. Never make up a number or roll "in your head". The result is final: narrate what it caused and do not soften it. Trivial or impossible actions need no roll.
-3. NARRATE. Only the player decides what their hero does, says, thinks or feels. Stop at the next real decision.
-4. SAVE. Right after the narration, in the same reply, call record_turn with the player's action and your narration word for word. Do it every turn without being asked, opening scene included. An unsaved turn is lost from the campaign and its memory. Character-creation questions and out-of-character chat are not turns.
-5. KEEP STATE TRUE, together with record_turn: update_character for any change to HP/MP, items, money, level or condition; update_npc when a named NPC first appears or their situation or attitude changes; update_notebook for short-lived facts (timers, positions, ongoing effects) and remove them when they end.
+3. NARRATE. Begin every narration with the scene header on its own line: 📅 time | 📍 Place - spot | 👥 who is here (e.g. "📅 Evening | 📍 The Mess Hall - the last table | 👥 Nine, Seven"; write Nobody when the hero is alone). Use the place names the world already has; a new place gets a plain name. Narration under the header follows the GM rules' format, without repeating it. Only the player decides what their hero does, says, thinks or feels. Stop at the next real decision.
+4. SAVE. Right after the narration, in the same reply, call record_turn with the player's action and your narration word for word, header included. Do it every turn without being asked, opening scene included. An unsaved turn is lost from the campaign and its memory. Character-creation questions and out-of-character chat are not turns.
+5. KEEP STATE TRUE, together with record_turn: update_character for any change to HP/MP, items, money, level or condition; update_npc when a named NPC first appears or their situation or attitude changes; update_notebook for short-lived facts (timers, positions, ongoing effects) and remove them when they end. When the turn changes the world for good (someone dies, joins or turns on someone, gains or loses something that matters, a place falls), pass it as events in record_turn. When an arc ends or the story jumps ahead, call close_chapter with a title and a short summary.
 
-Keep the story clean. The player sees only story: never mention tools, ids, saving, lookups or "the engine", and do not announce what you are about to check. After record_turn returns, add nothing; the turn is over. The dice tray already shows each roll, so do not repeat the arithmetic.
+Keep the story clean. The player sees only the header and the story: never mention tools, ids, saving, lookups or "the engine", and do not announce what you are about to check. After record_turn returns, add nothing; the turn is over. The dice tray already shows each roll, so do not repeat the arithmetic.
 If a tool fails, say so in one short out-of-character line and carry on; if Narrative Engine cannot be reached, stop the story and pass on the instructions in the error.`;
 
 export const SERVER_INSTRUCTIONS = `You are the Game Master (GM) of a Narrative Engine campaign, played with one player in this chat. Narrative Engine is your memory: it holds the GM rules, the world lore, the NPCs, the hero's sheet and every past scene. You tell the story; these tools keep it consistent and saved.
@@ -43,7 +43,7 @@ Starting a session:
 
 ${GM_LOOP}
 
-You are also the engine. Rulesets written for the Narrative Engine app describe engine tags and injected blocks (RESOLVED ROLL, DICE OUTCOMES, LOOT DROP, SURPRISE / ENCOUNTER / WORLD events, PLAY AS) that the app produces. Here nothing produces them, so you do that job: roll_dice replaces the engine's rolls (for a plain d20 it also reports the outcome tier the rules name), and now and then, when a scene has room, you introduce the small unprompted events the rules describe. Never print tags, tiers or engine syntax to the player.`;
+You are also the engine. Rulesets written for the Narrative Engine app describe engine tags and injected blocks (RESOLVED ROLL, DICE OUTCOMES, LOOT DROP, SURPRISE / ENCOUNTER / WORLD events, PLAY AS) that the app produces. Here nothing produces them, so you do that job: roll_dice replaces the engine's rolls (for a plain d20 it also reports the outcome tier the rules name), and now and then, when a scene has room, you introduce the small unprompted events the rules describe. Never print tags, tiers or engine syntax to the player. The 📅 | 📍 | 👥 scene header is not engine syntax: always write it.`;
 
 const campaignId = z.string().min(1).describe('Campaign id from list_campaigns');
 const meta = { ui: { resourceUri: PANEL_URI } };
@@ -89,6 +89,9 @@ export function briefingText(b) {
     if (b.rules) out.push('## GM rules (your operating manual; follow them)', b.rules);
     if (b.worldOverview.length) out.push('## World overview', ...b.worldOverview.map((l) => `### ${l.header}\n${l.content}`));
     out.push('## Hero', heroReady ? sheetText(b.character) : 'No hero yet. Run character creation, then save the hero with update_character.');
+    if (b.location) out.push('## Where the hero is', `${b.location.place}${b.location.feature ? ` - ${b.location.feature}` : ''}`);
+    if (b.places?.length) out.push('## Places (use these names in the 📍 header)', b.places.join(' · '));
+    if (b.storySoFar?.length) out.push('## Story so far (closed chapters)', b.storySoFar.map((c) => `**${c.title}:** ${c.summary}`).join('\n\n'));
     if (b.npcs.length) out.push('## Known NPCs (get_npcs for details)', b.npcs.map((n) => `- ${n.name}${n.status ? ` — ${n.status}` : ''}${n.faction ? ` [${n.faction}]` : ''}`).join('\n'));
     if (b.notebook.length) out.push('## Scene notebook', b.notebook.map((n) => `- ${n}`).join('\n'));
     if (b.sceneNote) out.push('## Scene note', b.sceneNote);
@@ -361,16 +364,44 @@ export function buildServer(client) {
         inputSchema: {
             campaignId,
             playerAction: z.string().describe('What the player did or said this turn, in their words (empty string for an opening scene)'),
-            narration: z.string().min(1).describe('Your narration for this turn, word for word as the player saw it'),
+            narration: z.string().min(1).describe('Your narration for this turn, word for word as the player saw it, starting with the 📅 | 📍 | 👥 header line'),
             importance: z.number().int().min(1).max(10).optional().describe('How much this scene matters later: 1-3 routine, 4-6 notable, 7-10 turning point'),
+            events: z.array(z.object({
+                subject: z.string().min(1).describe('Who or what changed, e.g. "Nine"'),
+                predicate: z.enum(gm.TIMELINE_PREDICATES).describe('The kind of change'),
+                object: z.string().min(1).describe('e.g. "the mountain road", "Seven", "the insignia"'),
+                summary: z.string().max(200).optional().describe('One plain sentence'),
+                importance: z.number().int().min(1).max(10).optional(),
+            })).max(5).optional().describe('Lasting changes to the world this turn, for the campaign timeline. Omit for ordinary turns.'),
         },
         _meta: meta,
     }, safe(async ({ campaignId: id, ...turn }) => {
-        const r = await gm.recordTurn(client, id, turn);
+        const kit = await loadCampaignKit().catch((err) => { console.error('[MCP] campaign kit unavailable, location not tracked:', err.message); return null; });
+        const r = await gm.recordTurn(client, id, turn, { kit });
+        const where = r.location?.place ? ` Location: ${r.location.place}${r.location.feature ? ` - ${r.location.feature}` : ''}${r.location.newPlace ? ' (new place added)' : ''}.` : '';
+        const events = r.timelineEvents ? ` ${r.timelineEvents} timeline event${r.timelineEvents === 1 ? '' : 's'} saved.` : '';
         const text = r.duplicate
             ? `Turn ${r.turnNumber} was already saved; nothing written twice.`
-            : `Turn ${r.turnNumber} saved${r.sceneId ? '' : ' to the chat, but long-term memory did not take it (it will be missing from recall_memory)'}.`;
+            : `Turn ${r.turnNumber} saved${r.sceneId ? '' : ' to the chat, but long-term memory did not take it (it will be missing from recall_memory)'}.${where}${events}`;
         return ok(text, { view: 'turn', campaignId: id, ...r });
+    }));
+
+    server.registerTool('close_chapter', {
+        title: 'Close chapter',
+        description: 'Close the current chapter at a natural break (an arc resolves, the story jumps ahead, a new journey starts) and open the next. Your title and summary become the chapter record in Narrative Engine and the "story so far" when the campaign is reopened. Not every few turns: a chapter is usually 10-30 turns.',
+        inputSchema: {
+            campaignId,
+            title: z.string().min(1).max(80).describe('Chapter title, e.g. "The Gate at Dawn"'),
+            summary: z.string().min(20).max(1200).describe('What happened in this chapter, 2-5 plain sentences'),
+            majorEvents: z.array(z.string()).max(8).optional(),
+            unresolvedThreads: z.array(z.string()).max(8).optional().describe('Open questions and promises carried into the next chapter'),
+            npcs: z.array(z.string()).max(12).optional().describe('Named NPCs who mattered in this chapter'),
+            themes: z.array(z.string()).max(6).optional(),
+            tone: z.string().max(60).optional(),
+        },
+    }, safe(async ({ campaignId: id, ...input }) => {
+        const r = await gm.closeChapter(client, id, input);
+        return ok(`Chapter "${r.title}" closed (${r.sceneCount} scene${r.sceneCount === 1 ? '' : 's'}). The next chapter is open.`, r);
     }));
 
     server.registerPrompt('run_campaign', {

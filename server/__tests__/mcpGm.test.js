@@ -3,6 +3,7 @@ import { rollDice, describeRoll, DiceError, outcomeTier } from '../mcp/dice.js';
 import * as gm from '../mcp/gm.js';
 import { createEngineClient, EngineUnavailableError } from '../mcp/engineClient.js';
 import { panelHtml, PANEL_URI } from '../mcp/views.js';
+import { loadCampaignKit } from '../mcp/kit.js';
 
 /** In-memory stand-in for the engine HTTP API. */
 function fakeEngine() {
@@ -29,6 +30,12 @@ function fakeEngine() {
         index: [],
         scenes: [],
         puts: [],
+        locations: [
+            { id: 'loc_hold', name: 'Cinderhold', aliases: 'the hold', features: ['gate'], connections: [] },
+            { id: 'loc_market', name: 'Ash Market', aliases: '', features: [], connections: [] },
+        ],
+        chapters: [],
+        timeline: [],
     };
     const client = {
         listCampaigns: async () => db.campaigns,
@@ -46,8 +53,24 @@ function fakeEngine() {
             const sceneId = String(db.index.length + 1).padStart(3, '0');
             db.index.push({ sceneId, keywords: ['embersteel'], userSnippet: user, npcsMentioned: [], witnesses: [] });
             db.scenes.push({ sceneId, content: `## SCENE ${sceneId}\n${user}\n${assistant}` });
+            // Like the engine: the first scene opens chapter CH01, later ones join the open chapter.
+            let open = db.chapters.find((c) => !c.sealedAt);
+            if (!open) db.chapters.push(open = { chapterId: `CH${String(db.chapters.length + 1).padStart(2, '0')}`, title: 'Open Chapter', sceneCount: 0 });
+            open.sceneCount++;
             return { ok: true, sceneId };
         },
+        getLocations: async () => structuredClone(db.locations),
+        putLocations: async (_id, l) => { db.locations = structuredClone(l); return { ok: true }; },
+        getChapters: async () => structuredClone(db.chapters),
+        sealChapter: async (_id, title) => {
+            const open = db.chapters.find((c) => !c.sealedAt);
+            Object.assign(open, { sealedAt: Date.now(), title });
+            const next = { chapterId: `CH${String(db.chapters.length + 1).padStart(2, '0')}`, title: 'Open Chapter', sceneCount: 0 };
+            db.chapters.push(next);
+            return { sealedChapter: structuredClone(open), newOpenChapter: next };
+        },
+        patchChapter: async (_id, chapterId, patch) => Object.assign(db.chapters.find((c) => c.chapterId === chapterId), patch),
+        addTimelineEvent: async (_id, e) => { db.timeline.push(e); return { id: `tl_${db.timeline.length}`, ...e }; },
     };
     return { db, client };
 }
@@ -308,6 +331,69 @@ describe('GM operations', () => {
         expect(t.sceneId).toBeNull();
         expect(db.state.messages).toHaveLength(1);
         await expect(gm.recordTurn(client, 'c1', { playerAction: 'x', narration: ' ' })).rejects.toThrow(/narration/);
+    });
+});
+
+describe('Claude-only bookkeeping (what the app otherwise does with its own AI model)', () => {
+    let db;
+    let client;
+    let kit;
+    beforeEach(async () => {
+        ({ db, client } = fakeEngine());
+        kit ??= await loadCampaignKit();
+    });
+
+    it('moves the current place from the 📍 header with the app\'s own parser', async () => {
+        let t = await gm.recordTurn(client, 'c1', { playerAction: '', narration: '📅 Dusk | 📍 Cinderhold - the forge | 👥 Vash\n\nSparks climb the dark.' }, { kit });
+        expect(t.location).toEqual({ place: 'Cinderhold', feature: 'the forge', newPlace: null });
+        expect(db.state.context).toMatchObject({ currentPlaceId: 'loc_hold', currentFeature: 'the forge' });
+        expect(db.locations.find((l) => l.id === 'loc_hold').features).toEqual(['gate', 'the forge']);
+
+        // A place the world does not have yet is added to Places, as the app does.
+        t = await gm.recordTurn(client, 'c1', { playerAction: 'I leave.', narration: '📅 Night | 📍 Salt Road - milestone | 👥 Nobody\n\nWind.' }, { kit });
+        expect(t.location).toMatchObject({ place: 'Salt Road', feature: 'milestone', newPlace: 'Salt Road' });
+        expect(db.locations.map((l) => l.name)).toContain('Salt Road');
+
+        // No header: the place stays where it was and the turn still saves.
+        t = await gm.recordTurn(client, 'c1', { playerAction: 'I wait.', narration: 'Nothing moves.' }, { kit });
+        expect(t.location).toBeNull();
+        expect(db.state.context.currentPlaceId).toBe(db.locations.find((l) => l.name === 'Salt Road').id);
+        expect(db.state.messages.filter((m) => m.role === 'assistant')).toHaveLength(3);
+
+        const b = await gm.openCampaign(client, 'c1');
+        expect(b.location).toEqual({ place: 'Salt Road', feature: 'milestone' });
+        expect(b.places).toContain('Cinderhold');
+    });
+
+    it('saves the turn even when location tracking cannot run', async () => {
+        const t = await gm.recordTurn(client, 'c1', { playerAction: '', narration: '📅 Dusk | 📍 Cinderhold | 👥 Vash\n\nText.' });
+        expect(t.location).toBeNull();
+        client.getLocations = async () => { throw new Error('locations file corrupt'); };
+        const t2 = await gm.recordTurn(client, 'c1', { playerAction: 'go', narration: '📅 Dusk | 📍 Cinderhold | 👥 Vash\n\nMore.' }, { kit });
+        expect(t2.sceneId).toBe('002');
+        expect(db.state.messages.filter((m) => m.role === 'assistant')).toHaveLength(2);
+    });
+
+    it('files Claude\'s timeline events under the scene and open chapter', async () => {
+        const t = await gm.recordTurn(client, 'c1', {
+            playerAction: 'I take the key.',
+            narration: 'The key is yours.',
+            events: [{ subject: 'Kira', predicate: 'holds', object: 'the vault key', importance: 6 }],
+        });
+        expect(t.timelineEvents).toBe(1);
+        expect(db.timeline).toEqual([{ subject: 'Kira', predicate: 'holds', object: 'the vault key', summary: 'Kira holds the vault key', importance: 6, sceneId: '001', chapterId: 'CH01' }]);
+        await expect(gm.recordTurn(client, 'c1', { playerAction: 'x', narration: 'y', events: Array(6).fill({ subject: 'a', predicate: 'misc', object: 'b' }) })).rejects.toThrow(/At most 5/);
+    });
+
+    it('closes a chapter with Claude\'s summary and shows it as the story so far', async () => {
+        await expect(gm.closeChapter(client, 'c1', { title: 'Too soon', summary: 'Nothing has happened yet at all.' })).rejects.toThrow(/no recorded scenes/);
+        await gm.recordTurn(client, 'c1', { playerAction: '', narration: 'Opening.' });
+        await gm.recordTurn(client, 'c1', { playerAction: 'Go on.', narration: 'The gate opens.' });
+        const r = await gm.closeChapter(client, 'c1', { title: 'The Gate', summary: 'Kira reached Cinderhold and the gate opened.', unresolvedThreads: ['Who sent the letter?'] });
+        expect(r).toEqual({ chapterId: 'CH01', title: 'The Gate', sceneCount: 2, nextChapterId: 'CH02' });
+        expect(db.chapters[0]).toMatchObject({ title: 'The Gate', summary: 'Kira reached Cinderhold and the gate opened.', synopsis: 'Kira reached Cinderhold and the gate opened.', unresolvedThreads: ['Who sent the letter?'] });
+        expect((await gm.openCampaign(client, 'c1')).storySoFar).toEqual([{ title: 'The Gate', summary: 'Kira reached Cinderhold and the gate opened.' }]);
+        await expect(gm.closeChapter(client, 'c1', { title: '', summary: 'x' })).rejects.toThrow(/title and a summary/);
     });
 });
 
