@@ -152,9 +152,16 @@ export function pathIsInstallable(folder, platform = process.platform) {
 /** Can the engine's native pieces load with this Node? (They break when Node is upgraded.) */
 export function checkDeps(root = REPO_ROOT) {
     const require = createRequire(path.join(root, 'package.json'));
+    // @narrative/engine is this repo's own packages/engine, linked into
+    // node_modules by absolute path: moving the folder leaves the link dangling.
+    // `npm install` re-links it.
     const missing = ['express', '@modelcontextprotocol/sdk/package.json', 'vite/package.json', 'concurrently/package.json', 'esbuild']
         .filter((m) => { try { require.resolve(m); return false; } catch { return true; } });
     if (missing.length) return { ok: false, fix: 'install', reason: `not installed yet: ${missing.join(', ')}` };
+    // existsSync follows the link, so a dangling one reads as missing.
+    if (!fs.existsSync(path.join(root, 'node_modules', '@narrative', 'engine', 'package.json'))) {
+        return { ok: false, fix: 'install', reason: 'This folder was moved or renamed since the install; re-linking it.' };
+    }
     try {
         const Database = require('better-sqlite3');
         new Database(':memory:').close();
