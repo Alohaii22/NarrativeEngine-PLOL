@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { buildServer, briefingText, GM_LOOP, SERVER_INSTRUCTIONS } from '../mcp/server.js';
+import { buildServer, briefingText, traceLine, GM_LOOP, SERVER_INSTRUCTIONS } from '../mcp/server.js';
 import { createEngineClient } from '../mcp/engineClient.js';
 import { createEngineLauncher } from '../mcp/engineLauncher.js';
 import fs from 'fs';
@@ -237,5 +237,34 @@ describe('briefing text', () => {
 
     it('gives the campaign id Claude needs for every later call', () => {
         expect(briefingText(base)).toMatch(/^# Ashfall \(campaignId: c1\)/);
+    });
+});
+
+describe('tool trace for mcp.log', () => {
+    it('records the dice total and the saved turn number, never the story text', () => {
+        const dice = traceLine('roll_dice', { expression: '1d20+2', label: 'Stealth' }, { content: [], structuredContent: { view: 'dice', total: 14 } }, 3);
+        expect(dice).toBe('[tool] roll_dice "1d20+2" (Stealth) -> ok total=14 (3 ms)');
+        const turn = traceLine('record_turn', { campaignId: 'c1', playerAction: 'I run', narration: 'The secret door opens.' }, { content: [], structuredContent: { view: 'turn', turnNumber: 4 } }, 12);
+        expect(turn).toMatch(/record_turn narration 22 chars, action 5 chars -> ok turn=4/);
+        expect(turn).not.toMatch(/secret door/);
+    });
+
+    it('records failures with the start of the error', () => {
+        const line = traceLine('recall_lore', { query: 'who rules' }, { isError: true, content: [{ type: 'text', text: 'Error: Narrative Engine is not running' }] }, 5);
+        expect(line).toMatch(/recall_lore "who rules" -> ERROR Error: Narrative Engine is not running/);
+    });
+
+    it('logs one line per real tool call', async () => {
+        const lines = [];
+        const spy = vi.spyOn(console, 'error').mockImplementation((l) => lines.push(String(l)));
+        try {
+            const server = buildServer(createEngineClient({ baseUrl: 'http://127.0.0.1:1', fetchImpl: async () => { throw new Error('down'); } }));
+            const [a, b] = InMemoryTransport.createLinkedPair();
+            const client = new Client({ name: 't', version: '1' });
+            await Promise.all([server.connect(a), client.connect(b)]);
+            await client.callTool({ name: 'roll_dice', arguments: { expression: '2d6' } });
+            await client.close();
+        } finally { spy.mockRestore(); }
+        expect(lines.filter((l) => l.includes('[tool] roll_dice "2d6" -> ok total='))).toHaveLength(1);
     });
 });

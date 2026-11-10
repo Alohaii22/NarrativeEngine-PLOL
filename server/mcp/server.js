@@ -117,11 +117,46 @@ function campaignPanel(id, b) {
     };
 }
 
+/**
+ * One stderr line per tool call (stderr ends up in mcp.log under Claude
+ * Desktop), so a real session can be audited afterwards: which tools ran, in
+ * what order, and whether each narration was saved. Story text is not logged,
+ * only its length. NE_TRACE=0 turns it off.
+ */
+export function traceLine(name, args, result, ms) {
+    const a = args ?? {};
+    const bits = [];
+    if (a.expression) bits.push(`"${a.expression}"${a.label ? ` (${a.label})` : ''}`);
+    if (a.query) bits.push(`"${a.query}"`);
+    if (a.world) bits.push(`world=${a.world}`);
+    if (a.name) bits.push(`name=${a.name}`);
+    if (a.names) bits.push(`names=${a.names.join('|')}`);
+    if (a.actions) bits.push(`${a.actions.length} note action(s)`);
+    if (typeof a.narration === 'string') bits.push(`narration ${a.narration.length} chars, action ${String(a.playerAction ?? '').length} chars`);
+    if (a.hpDelta) bits.push(`hpDelta=${a.hpDelta}`);
+    if (a.inventory) bits.push(`${a.inventory.length} item change(s)`);
+    const sc = result?.structuredContent;
+    let outcome = result?.isError ? `ERROR ${String(result.content?.[0]?.text ?? '').slice(0, 160)}` : 'ok';
+    if (!result?.isError && sc?.view === 'dice' && sc.total !== undefined) outcome += ` total=${sc.total}`;
+    if (!result?.isError && sc?.view === 'turn') outcome += ` turn=${sc.turnNumber}${sc.duplicate ? ' (duplicate)' : ''}`;
+    return `[tool] ${name}${bits.length ? ` ${bits.join(', ')}` : ''} -> ${outcome} (${ms} ms)`;
+}
+
 export function buildServer(client) {
     const server = new McpServer(
         { name: 'narrative-engine', version: '1.1.0' },
         { instructions: SERVER_INSTRUCTIONS },
     );
+
+    if (process.env.NE_TRACE !== '0') {
+        const register = server.registerTool.bind(server);
+        server.registerTool = (name, config, handler) => register(name, config, async (args, extra) => {
+            const started = Date.now();
+            const result = await handler(args, extra);
+            try { console.error(`[${new Date().toISOString()}] ${traceLine(name, args, result, Date.now() - started)}`); } catch { /* never break a tool over logging */ }
+            return result;
+        });
+    }
 
     registerAppResource(server, 'Narrative Engine panel', PANEL_URI,
         { description: 'Inline campaign, dice, character and turn views' },
