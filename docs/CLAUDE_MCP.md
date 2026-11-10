@@ -81,7 +81,26 @@ It checks everything before creating the campaign (lore entries, NPCs, locations
 | `roll_dice` | Real dice: `d20`, `2d6+3`, `4d6kh3`, `1d20+5 adv` | Dice tray with **Roll again** |
 | `show_character` / `update_character` | Character creation (name, race, class, looks, skills), HP/MP, level, stats, condition, inventory | Character sheet with HP buttons |
 | `update_notebook` | Short-lived scene state (timers, positions, effects) | |
-| `record_turn` | Saves the turn to the chat and long-term memory | Save receipt and hero status |
+| `record_turn` | Saves the turn to the chat and long-term memory; moves the current place from the narration's `📍` header; files timeline events Claude names | Save receipt and hero status |
+| `close_chapter` | Closes the chapter with Claude's title and summary and opens the next | |
+
+## Playing with Claude only (no Ollama, no API key)
+
+When Claude is the GM, Narrative Engine needs no AI model of its own. Everything the app normally does after a turn, Claude's tools do instead:
+
+| After each turn, the app normally… | With Claude as GM |
+|---|---|
+| writes the GM reply with its configured model | Claude writes it in the chat |
+| reads the `📅 \| 📍 \| 👥` header to move the current place | `record_turn` runs the app's own header parser (`src/services/locationHeader.ts`); new places are added to Places |
+| scans the reply for HP, items and traits (AI) | Claude calls `update_character` |
+| validates NPCs and their stance (AI) | Claude calls `update_npc`; lore NPCs with `PersonalityHex` / `Traits` need no inference |
+| extracts timeline events (AI) | Claude passes them as `events` in `record_turn` |
+| seals chapters with an AI summary | Claude calls `close_chapter` |
+| archives the scene and indexes it for recall | the same, done by the engine (keywords, NPCs, witnesses, local embedding model) |
+
+The briefing Claude gets when a campaign opens includes where the hero is, the known place names and the summaries of closed chapters.
+
+**What still needs the app's own model.** These buttons in the Narrative Engine window call the model set in the app's settings, and fail with "connection refused" when that is an Ollama address and Ollama isn't running: AI-guided character creation, Deep Search, time-skip narration, image generation, and sending a turn from the window itself. With Claude as GM you don't need them: create the character in the chat, ask Claude to recall things, and play in Claude Desktop. The window is your live display.
 
 The server also includes a **`run_campaign`** prompt. In Claude Desktop, pick it
 from the **+** menu to start a session with the GM instructions already loaded.
@@ -187,7 +206,7 @@ choose "Always allow".
 
 ## Testing
 
-`npm run mcp:smoke` plays a whole session through the MCP server over stdio, the way Claude Desktop talks to it: pick a world, create the campaign, create the hero, an opening scene and five turns with dice, lore recall, NPC and notebook updates and simultaneous tool calls, then restart everything and check that turns, hero, NPCs, notebook and memory recall survived. It also covers bad input and the engine being down.
+`npm run mcp:smoke` plays a whole session through the MCP server over stdio, the way Claude Desktop talks to it: pick a world, create the campaign, create the hero, an opening scene and five turns with dice, lore recall, NPC and notebook updates, scene headers that move the current place, a timeline event, a closed chapter and simultaneous tool calls, then restart everything and check that turns, hero, NPCs, notebook, places, timeline, chapters and memory recall survived. It uses no AI model besides the engine's local embedding model, so it also proves the Claude-only setup. It also covers bad input and the engine being down.
 
 - By default it starts its own engine on a spare port with throwaway data, so it is safe to run while you have a game open.
 - `npm run mcp:smoke -- --engine-url http://127.0.0.1:3001 --ui-url http://localhost:5173` runs against your running engine and also checks the browser display's API; the test campaign is deleted afterwards unless you add `--keep`.

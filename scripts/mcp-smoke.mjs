@@ -186,7 +186,9 @@ async function main() {
         const lore = await gm.call('recall_lore', { campaignId, query: 'class scroll' });
         check('recall_lore returns lore', !lore.isError && (lore.data?.headers?.length ?? 0) > 0 && /^### /.test(lore.text), lore.text.slice(0, 120));
         const noLore = await gm.call('recall_lore', { campaignId, query: 'zzqx vrrbl' });
-        check('recall_lore with no match says so instead of failing', !noLore.isError && /No lore found/.test(noLore.text), noLore.text.slice(0, 120));
+        // Keyword recall finds nothing here; once the embedding model is warm,
+        // semantic search returns the nearest entries instead. Either is fine.
+        check('recall_lore with no keyword match answers instead of failing', !noLore.isError && (/No lore found/.test(noLore.text) || noLore.data?.method === 'semantic+keyword'), noLore.text.slice(0, 120));
         const t0 = await gm.call('record_turn', { campaignId, playerAction: '', narration: `📅 Evening | 📍 Port Vell - the slate steps | 👥 Nobody
 
 Rain hammers the slate roofs as ${HERO} steps off the ferry, satchel held tight. A lantern swings over the Scribe Hall door.` });
