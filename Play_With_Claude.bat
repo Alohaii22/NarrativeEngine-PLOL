@@ -30,42 +30,46 @@ if not exist "packages\engine\dist\index.js" (
     if errorlevel 1 goto :fail
 )
 
-echo   Connecting Narrative Engine to Claude Desktop...
-node scripts\install-claude-gm.mjs
-set INSTALL_RESULT=%errorlevel%
-if %INSTALL_RESULT%==1 goto :fail
+rem Older versions added a config-file entry; the desktop extension replaces it.
+node scripts\install-claude-gm.mjs --remove-legacy
+set LEGACY=%errorlevel%
+if %LEGACY%==1 goto :fail
+
+echo   Building the Claude Desktop extension...
+node scripts\build-mcpb.mjs
+if errorlevel 1 goto :fail
 
 echo   Starting Narrative Engine (live display window)...
 start "Narrative Engine" /min cmd /c "npm run dev"
 
-rem Claude Desktop only reads its config at startup: restart it if we just changed it.
-if %INSTALL_RESULT%==10 (
+if %LEGACY%==10 (
     taskkill /IM claude.exe /F >nul 2>nul
     timeout /t 2 /nobreak >nul
 )
 
-set CLAUDE_EXE=%LOCALAPPDATA%\AnthropicClaude\claude.exe
-if exist "%CLAUDE_EXE%" (
-    start "" "%CLAUDE_EXE%"
+node scripts\install-claude-gm.mjs --check-extension
+if errorlevel 3 (
+    echo.
+    echo   Opening the extension in Claude Desktop: click INSTALL when it asks.
+    start "" "%~dp0NarrativeEngine.mcpb"
 ) else (
-    start "" "claude://" 2>nul
-    if errorlevel 1 (
-        echo   Claude Desktop was not found. Opening the download page...
-        start "" "https://claude.ai/download"
-    )
+    echo   The Narrative Engine extension is already installed in Claude Desktop.
+    if exist "%LOCALAPPDATA%\AnthropicClaude\claude.exe" start "" "%LOCALAPPDATA%\AnthropicClaude\claude.exe"
 )
 
 timeout /t 6 /nobreak >nul
 start "" "http://localhost:5173/launcher.html"
 
 echo.
-echo   Ready! In Claude Desktop, start a new chat and type:
+echo   Ready! In Claude Desktop:
+echo     1. If an install screen appeared, click Install.
+echo        (No install screen? Drag NarrativeEngine.mcpb from this folder
+echo         into the Claude Desktop window.)
+echo     2. Start a new chat and type:   Let's play Narrative Engine
+echo     3. Allow the narrative-engine tools when Claude asks.
 echo.
-echo       Let's play Narrative Engine
-echo.
-echo   (Allow the narrative-engine tools when Claude asks.)
-echo   The browser window shows your campaign live as you play.
-echo   You can close this window.
+echo   Check it under Settings ^> Extensions. If something fails, send
+echo   server\mcp\.cache\mcp.log to whoever is helping you.
 echo.
 pause
 exit /b 0

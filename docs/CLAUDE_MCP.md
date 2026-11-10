@@ -19,19 +19,20 @@ plays.
 ## One-click start
 
 1. Install [Claude Desktop](https://claude.ai/download) and [Node.js LTS](https://nodejs.org/) if you don't have them.
-2. Double-click **`Play_With_Claude.bat`** (Windows) or **`Play_With_Claude.command`** (macOS; on Linux run `./Play_With_Claude.command`).
-3. In Claude Desktop, start a new chat and type **"Let's play Narrative Engine"**. Allow the `narrative-engine` tools when asked.
+2. Double-click **`Play_With_Claude.bat`** (Windows) or **`Play_With_Claude.command`** (macOS).
+3. Claude Desktop opens an install screen for the **Narrative Engine** extension: click **Install**. If no screen appears, drag `NarrativeEngine.mcpb` from the folder into the Claude Desktop window, or use **Settings > Extensions > Advanced settings > Install Extension…**.
+4. Start a new chat and type **"Let's play Narrative Engine"**. Allow the `narrative-engine` tools when asked.
 
-Claude lists your campaigns, or offers the bundled worlds and starts a new campaign, walks you through character creation, and runs the game.
-
-The first run installs everything, which takes a few minutes. After that:
-- Claude Desktop is connected to Narrative Engine (your config is backed up first; other servers are kept).
-- Narrative Engine starts, and a browser tab shows your campaign live.
-- Claude Desktop restarts if needed so it picks up the change.
+The first run installs everything, which takes a few minutes. The button then:
+- builds `NarrativeEngine.mcpb`, a Claude Desktop extension pointing at this folder;
+- starts Narrative Engine and opens the Campaign Launcher in your browser.
 
 If Narrative Engine isn't running when Claude needs it, it starts in the background on its own.
 
-The manual steps below are only needed if you want to set things up by hand.
+**Check it:** the extension appears under **Settings > Extensions**, where you can turn it on or off and change its folder.
+**If it fails:** open `server/mcp/.cache/mcp.log` in the Narrative Engine folder. The extension logs every start and error there.
+
+The manual steps below are only needed if you want to set things up by hand (for example with Claude Code, or on Linux).
 
 ## Campaign Launcher
 
@@ -85,7 +86,7 @@ want the live display in the browser.
 
 ### 2. Add the server to Claude Desktop
 
-Run `node scripts/install-claude-gm.mjs` to do this automatically, or by hand: open Claude Desktop → **Settings → Developer → Edit Config**. That opens
+Easiest: run `node scripts/build-mcpb.mjs` and double-click the `NarrativeEngine.mcpb` it creates. Older Claude Desktop versions also read a config file; `node scripts/install-claude-gm.mjs` writes it for you, or by hand: open Claude Desktop → **Settings → Developer → Edit Config**. That opens
 `claude_desktop_config.json`:
 
 - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
@@ -164,7 +165,8 @@ choose "Always allow".
 - `server/mcp/worlds.js`: the catalog of bundled worlds and rulesets
 - `server/mcp/kit.js`: compiles `src/services/campaignKit.ts` for Node, so campaigns are built by the app's own code
 - `server/mcp/engineLauncher.js`: starts the engine when it's not running
-- `scripts/install-claude-gm.mjs`: registers the server with Claude Desktop
+- `scripts/build-mcpb.mjs`: builds the Claude Desktop extension (`NarrativeEngine.mcpb`)
+- `scripts/install-claude-gm.mjs`: config-file registration (Linux/older Claude Desktop) and cleanup of it
 - `Play_With_Claude.bat` / `Play_With_Claude.command`: the one-click launchers
 - `server/mcp/dice.js`: dice notation
 - `server/mcp/views.js`: the inline panel (MCP Apps)

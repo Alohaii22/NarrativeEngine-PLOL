@@ -30,19 +30,30 @@ if [ ! -f packages/engine/dist/index.js ]; then
   npm run build --prefix packages/engine || fail "engine build failed (see above)"
 fi
 
-echo "  Connecting Narrative Engine to Claude Desktop..."
-node scripts/install-claude-gm.mjs
-result=$?
-[ "$result" = 1 ] && fail "could not update the Claude Desktop config"
+if [ "$(uname)" = "Darwin" ]; then
+  # Older versions added a config-file entry; the desktop extension replaces it.
+  node scripts/install-claude-gm.mjs --remove-legacy; result=$?
+  [ "$result" = 1 ] && fail "could not update the Claude Desktop config"
+  echo "  Building the Claude Desktop extension..."
+  node scripts/build-mcpb.mjs || fail "could not build the extension"
+else
+  echo "  Connecting Narrative Engine to Claude Desktop..."
+  node scripts/install-claude-gm.mjs; result=$?
+  [ "$result" = 1 ] && fail "could not update the Claude Desktop config"
+fi
 
 echo "  Starting Narrative Engine (live display)..."
 mkdir -p server/mcp/.cache
 nohup npm run dev > server/mcp/.cache/dev.log 2>&1 &
 
 if [ "$(uname)" = "Darwin" ]; then
-  # Claude Desktop only reads its config at startup: restart it if we changed it.
   if [ "$result" = 10 ]; then osascript -e 'quit app "Claude"' >/dev/null 2>&1; sleep 2; fi
-  open -a Claude 2>/dev/null || { echo "  Claude Desktop not found. Opening the download page..."; open_url "https://claude.ai/download"; }
+  if node scripts/install-claude-gm.mjs --check-extension; then
+    open -a Claude 2>/dev/null || open_url "https://claude.ai/download"
+  else
+    echo "  Opening the extension in Claude Desktop: click Install when it asks."
+    open -a Claude "NarrativeEngine.mcpb" 2>/dev/null || open "NarrativeEngine.mcpb" 2>/dev/null || { echo "  Claude Desktop not found. Opening the download page..."; open_url "https://claude.ai/download"; }
+  fi
 else
   echo "  Open Claude Desktop (restart it if it was already running)."
 fi
@@ -51,7 +62,8 @@ sleep 6
 open_url "http://localhost:5173/launcher.html"
 
 echo
-echo "  Ready! In Claude Desktop, start a new chat and type:"
+echo "  Ready! In Claude Desktop (if an install screen appeared, click Install first),"
+echo "  start a new chat and type:"
 echo
 echo "      Let's play Narrative Engine"
 echo

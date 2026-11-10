@@ -88,8 +88,39 @@ export function install({ paths = configPaths(), entry = serverEntry(), log = co
     return changedAny;
 }
 
+/** Removes the config-file entry earlier versions added; the desktop extension replaces it. */
+export function removeLegacyEntry({ paths = configPaths(), log = console.log } = {}) {
+    let changed = false;
+    for (const file of paths) {
+        if (!fs.existsSync(file)) continue;
+        const text = fs.readFileSync(file, 'utf-8');
+        let config;
+        try { config = JSON.parse(text); } catch { continue; }
+        if (!config?.mcpServers?.[SERVER_NAME]) continue;
+        delete config.mcpServers[SERVER_NAME];
+        fs.writeFileSync(`${file}.bak`, text);
+        fs.writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`);
+        log(`Removed the old config entry (the desktop extension replaces it): ${file}`);
+        changed = true;
+    }
+    return changed;
+}
+
+/** Best effort: is the Narrative Engine desktop extension already installed? */
+export function extensionInstalled(paths = configPaths()) {
+    for (const file of paths) {
+        const dir = path.join(path.dirname(file), 'Claude Extensions');
+        try {
+            if (fs.readdirSync(dir).some((d) => /narrative-engine/i.test(d))) return true;
+        } catch { /* not there */ }
+    }
+    return false;
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
     try {
+        if (process.argv.includes('--check-extension')) process.exit(extensionInstalled() ? 0 : 3);
+        if (process.argv.includes('--remove-legacy')) process.exit(removeLegacyEntry() ? 10 : 0);
         process.exit(install() ? 10 : 0);
     } catch (err) {
         console.error(`Setup failed: ${err.message}`);
