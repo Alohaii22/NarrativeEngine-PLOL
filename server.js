@@ -34,7 +34,9 @@ import { serverError } from './server/lib/serverError.js';
 import { createHostGuard, createFetchSiteGuard } from './server/lib/requestGuards.js';
 
 const app = express();
-const PORT = 3001;
+// 3001 is what the UI and the Vite proxy expect. NE_ENGINE_PORT exists so a
+// throwaway engine (npm run mcp:smoke) can run next to a live one.
+const PORT = Number(process.env.NE_ENGINE_PORT) || 3001;
 
 // Initialize vault
 const vault = new KeyVault(DATA_DIR);

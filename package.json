@@ -18,7 +18,8 @@
     "test:coverage": "vitest run --coverage",
     "i18n:check": "node scripts/i18n-check.mjs",
     "mcp": "node server/mcp/index.js",
-    "mcp:http": "node server/mcp/index.js --http"
+    "mcp:http": "node server/mcp/index.js --http",
+    "mcp:smoke": "node scripts/mcp-smoke.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.0.1",
