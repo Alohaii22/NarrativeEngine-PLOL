@@ -55,7 +55,6 @@ h2 { font:600 12px/1.2 system-ui; letter-spacing:.08em; text-transform:uppercase
 button { font:inherit; border:1px solid var(--line); background:var(--card); color:var(--ink); border-radius:8px; padding:4px 10px; cursor:pointer; }
 button:hover { border-color:var(--accent); }
 ul { margin:4px 0; padding-left:18px; }
-.narr { white-space:pre-wrap; max-height:220px; overflow:auto; border-left:3px solid var(--accent); padding-left:10px; }
 @media (prefers-reduced-motion: reduce) { .die { animation:none; } }
 `;
 
@@ -99,7 +98,7 @@ function diceHtml(r) {
 function campaignHtml(c) {
   const npcs = (c.npcs || []).slice(0, 12).map((n) => '<li><b>' + esc(n.name) + '</b>' + (n.status ? ' — ' + esc(n.status) : '') + '</li>').join('');
   const notes = (c.notebook || []).map((n) => '<li>' + esc(n) + '</li>').join('');
-  return '<div class="card"><h1>' + esc(c.campaign.name) + '</h1><div class="muted">' + (c.isNewCampaign ? 'New campaign' : c.scenesArchived + ' scenes in the archive') + ' · ' + (c.loreTopics || []).length + ' lore entries</div></div>'
+  return '<div class="card"><h1>' + esc(c.campaign.name) + '</h1><div class="muted">' + (c.isNewCampaign ? 'New campaign' : (c.turnsPlayed || c.scenesArchived) + ' turns played') + ' · ' + (c.loreCount || 0) + ' lore entries</div></div>'
     + '<h2>Hero</h2>' + sheetHtml(c.character)
     + (npcs ? '<h2>Known NPCs</h2><div class="card"><ul>' + npcs + '</ul></div>' : '')
     + (notes ? '<h2>Scene notebook</h2><div class="card"><ul>' + notes + '</ul></div>' : '');
@@ -107,10 +106,10 @@ function campaignHtml(c) {
 
 function turnHtml(t) {
   const notes = (t.notebook || []).map((n) => '<li>' + esc(n) + '</li>').join('');
-  return '<div class="card"><div class="row"><h1>Turn ' + t.turnNumber + '</h1><span class="muted">' + (t.sceneId ? 'saved as scene ' + esc(t.sceneId) : 'saved') + '</span></div>'
-    + (t.playerAction ? '<div class="muted" style="margin:6px 0">▶ ' + esc(t.playerAction) + '</div>' : '')
-    + '<div class="narr">' + esc(t.narration) + '</div></div>'
-    + '<h2>Hero</h2>' + sheetHtml(t.character, t.campaignId)
+  // The story is already in the chat above; this is only the save receipt and the hero's status.
+  return '<div class="row" style="margin-bottom:8px"><span class="pill">Turn ' + esc(t.turnNumber) + ' saved</span>'
+    + (t.sceneId ? '' : '<span class="pill" style="color:var(--bad)">not in long-term memory</span>') + '</div>'
+    + sheetHtml(t.character, t.campaignId)
     + (notes ? '<h2>Scene notebook</h2><div class="card"><ul>' + notes + '</ul></div>' : '');
 }
 
