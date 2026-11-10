@@ -33,6 +33,21 @@ If Narrative Engine isn't running when Claude needs it, it starts in the backgro
 
 The manual steps below are only needed if you want to set things up by hand.
 
+## Campaign Launcher
+
+The launchers open the **Campaign Launcher** (`http://localhost:5173/launcher.html`, also linked from the hub). Pick a bundled world, or upload your own files:
+
+| File | Needed? | What it is |
+|---|---|---|
+| World lore (.md) | **Required** | The setting. Use `##` headings; each section becomes something the GM can recall |
+| GM rules (.md) | Recommended | How the GM plays; defaults to AI_GM_OS v5.0 Immersive |
+| Opening prompt (.md) | Recommended | How the story starts, often with character creation |
+| Loot table (.json) | Optional | Item tables for the loot engine |
+| Character cards (.png/.json) | Optional | SillyTavern cards, imported as NPCs (PNG image becomes the portrait) |
+| Hero sheet | Optional | Fill it in, or let the GM create your character in the story |
+
+It checks everything before creating the campaign (lore entries, NPCs, locations, unreadable files) and shows what the GM will know.
+
 ## What Claude can do
 
 | Tool | What it does | Panel in chat |

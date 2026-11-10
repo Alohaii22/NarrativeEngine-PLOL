@@ -19,6 +19,8 @@ No cloud. No subscription. Your campaigns stay on your machine.
 
 **New in 2.0** — a frozen [mod API](docs/MODDING.md) with an **Extensions** tab, a pixel-art [World Map](#world-map-extension--work-in-progress), an [image gallery with vision recall](#images-vision--the-gallery), a [Location Ledger](#location-ledger), and a translated interface.
 
+> 🧭 **New: Campaign Launcher.** On the hub, click **Campaign Launcher** (or open `/launcher.html`) to pick one of 22 bundled worlds or bring your own lore, rules, opening prompt, loot table and character cards. It checks your files and tells you what's missing before you play.
+>
 > 🎲 **Play with Claude as your GM, no API key:** double-click `Play_With_Claude.bat` (Windows) or `Play_With_Claude.command` (macOS/Linux). [How it works](docs/CLAUDE_MCP.md)
 
 ---

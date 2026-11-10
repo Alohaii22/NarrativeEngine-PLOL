@@ -298,6 +298,18 @@ export function CampaignHub() {
                     <div style={{ width: 5, height: 5, background: 'var(--color-terminal)', transform: 'rotate(45deg)', opacity: 0.6 }} />
                     <div style={{ height: 1, width: 56, background: 'linear-gradient(to left, transparent, color-mix(in srgb, var(--color-terminal) 35%, transparent))' }} />
                 </div>
+                {/* Campaign Launcher: pick a bundled world or bring your own files (public/launcher.html) */}
+                <a
+                    href="launcher.html"
+                    style={{
+                        display: 'inline-block', marginTop: 14, fontFamily: 'var(--font-mono)', fontSize: 11,
+                        letterSpacing: '0.18em', textTransform: 'uppercase', color: 'var(--color-terminal)',
+                        textDecoration: 'none', borderBottom: '1px solid color-mix(in srgb, var(--color-terminal) 35%, transparent)',
+                        paddingBottom: 2,
+                    }}
+                >
+                    ✦ {t('hub.launcher.link')}
+                </a>
             </div>
 
             {/* ── Coverflow Carousel ── */}

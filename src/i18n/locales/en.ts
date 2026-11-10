@@ -217,6 +217,7 @@ export const en = {
     'hub.stImport.tooltip': 'Import from SillyTavern',
     'hub.settings.tooltip': 'Settings',
     'hub.worldLore.tooltip': 'Create World Lore',
+    'hub.launcher.link': 'Campaign Launcher: pick a world or bring your files',
     'hub.tagline': 'AI Game Master System',
     'hub.brand.lead': 'Narrative',
     'hub.brand.accent': 'Nexus',

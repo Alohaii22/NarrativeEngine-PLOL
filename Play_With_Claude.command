@@ -48,7 +48,7 @@ else
 fi
 
 sleep 6
-open_url "http://localhost:5173"
+open_url "http://localhost:5173/launcher.html"
 
 echo
 echo "  Ready! In Claude Desktop, start a new chat and type:"

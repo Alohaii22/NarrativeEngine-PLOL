@@ -14,6 +14,7 @@ import { parseNPCsFromLore } from './lore/loreNPCParser';
 import { parseLocationsFromLoreDetailed } from './lore/loreLocationParser';
 import { loadLootTree } from './lore/lootTreeLoader';
 import { dedupeNPCLedger } from './npc/dedupeNPCLedger';
+import { routeQuickAddFile, describeQuickAddFailure, planQuickAdd } from './import/ledgerQuickAdd';
 import {
     DEFAULT_SURPRISE_TYPES, DEFAULT_SURPRISE_TONES, DEFAULT_ENCOUNTER_TYPES, DEFAULT_ENCOUNTER_TONES,
     DEFAULT_WORLD_WHO, DEFAULT_WORLD_WHERE, DEFAULT_WORLD_WHY, DEFAULT_WORLD_WHAT,
@@ -107,4 +108,35 @@ export function buildCampaignFromMarkdown(input: { loreText: string; rulesText?:
     if (chunks.length > 0) context = applyEngineSeeds(context, extractEngineSeeds(chunks));
 
     return { chunks, npcs, locations: parsedLocations.locations, context, condenser: { ...DEFAULT_CONDENSER }, warnings };
+}
+
+// ── Character cards (SillyTavern PNG/JSON) ──────────────────────────────
+
+export type PreparedCard = { npc: NPCEntry; loreChunks: LoreChunk[]; characterSheets: LoreChunk[] };
+
+/** Same conversion as the New Campaign form's roster (import/campaignRoster.ts), without the DOM. */
+export function prepareCharacterCard(fileName: string, data: string | ArrayBuffer, matureMode = false): PreparedCard {
+    const png = /\.png$/i.test(fileName);
+    const routed = routeQuickAddFile(fileName, png ? 'png' : 'json', data);
+    if (routed.kind === 'failed') throw new Error(`${fileName}: ${describeQuickAddFailure(routed.reason)}`);
+    if (routed.kind !== 'card') throw new Error(`${fileName}: not a character card (use a SillyTavern PNG or JSON card).`);
+    const addition = planQuickAdd([routed], [], { userName: 'You', matureMode }).additions[0];
+    return {
+        npc: addition.npc,
+        loreChunks: addition.loreChunks.filter(c => c.category !== 'character'),
+        characterSheets: addition.loreChunks.filter(c => c.category === 'character'),
+    };
+}
+
+/** Cards win over NPCs inferred from lore with the same name; their character sheets join the lore. */
+export function mergeCards(built: BuiltCampaign, cards: PreparedCard[], includeCardLore = false): BuiltCampaign {
+    if (cards.length === 0) return built;
+    const cardNpcs = cards.map(c => ({ ...c.npc, name: c.npc.name.trim() }));
+    const npcs = [
+        ...built.npcs.filter(n => !cardNpcs.some(i => i.name.toLowerCase() === n.name.toLowerCase())),
+        ...cardNpcs,
+    ];
+    const extra = cards.flatMap(c => [...c.characterSheets, ...(includeCardLore ? c.loreChunks : [])]);
+    const chunks = [...built.chunks.filter(c => !extra.some(e => e.id === c.id)), ...extra];
+    return { ...built, npcs, chunks };
 }

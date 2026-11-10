@@ -56,7 +56,7 @@ if exist "%CLAUDE_EXE%" (
 )
 
 timeout /t 6 /nobreak >nul
-start "" "http://localhost:5173"
+start "" "http://localhost:5173/launcher.html"
 
 echo.
 echo   Ready! In Claude Desktop, start a new chat and type:

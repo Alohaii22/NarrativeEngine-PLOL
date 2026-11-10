@@ -22,6 +22,7 @@ import { createSceneImagesRouter } from './server/routes/sceneImages.js';
 import { createModsRouter } from './server/routes/mods.js';
 import { createCampaignAssetsRouter } from './server/routes/campaignAssets.js';
 import { createExternalRevisionRouter } from './server/routes/externalRevision.js';
+import { createLauncherRouter } from './server/routes/launcher.js';
 import { loadMods } from './server/lib/modLoader.js';
 import { registerModTables } from './server/lib/modTableRegistry.js';
 import { mountGenericTableRoutes, mountModTableRoutes, serverTableRegistry } from './server/lib/tableRegistry.js';
@@ -133,6 +134,7 @@ warmupTts().catch(err => console.error('[TTS] Warmup failed:', err.message));
 // Mounted first: it counts MCP writes (Claude Desktop as GM) on every route below.
 app.use(createExternalRevisionRouter());
 app.use(createVaultRouter(vault));
+app.use(createLauncherRouter({ enginePort: PORT }));
 app.use(createSettingsRouter());
 app.use(createCampaignsRouter());
 app.use(createArchiveRouter());

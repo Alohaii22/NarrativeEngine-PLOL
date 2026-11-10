@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Campaign Launcher · Narrative Engine</title>
+<link rel="icon" type="image/svg+xml" href="branding/narrative-engine.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&family=EB+Garamond:ital,wght@0,400;0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500;600&display=swap">
+<style>
+:root {
+  --accent: #6D28D9; --accent-dim: #5B21B6; --ground: #FAFAF8; --ink: #1A1A1A; --surface: #F0EFED;
+  --card: #FFFFFF; --border: #DEDEDE; --dim: #6B6B6B; --ok: #15803d; --warn: #b45309; --err: #b91c1c;
+  --serif: 'EB Garamond', Georgia, serif; --display: 'Cinzel', 'EB Garamond', serif;
+  --mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --accent: #A78BFA; --accent-dim: #8B5CF6; --ground: #141519; --ink: #EBEBEB; --surface: #1C1E23; --card: #22252B; --border: #363A44; --dim: #909090; --ok: #4ade80; --warn: #fbbf24; --err: #f87171; }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; background: var(--ground); color: var(--ink); }
+body { font-family: var(--serif); font-size: 17px; line-height: 1.5;
+  background-image: radial-gradient(ellipse at 50% -10%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 60%); min-height: 100vh; }
+.wrap { max-width: 980px; margin: 0 auto; padding: 28px 16px 80px; }
+a { color: var(--accent); }
+.top { display: flex; justify-content: space-between; align-items: center; font-family: var(--mono); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; }
+.top a { text-decoration: none; border-bottom: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); padding-bottom: 2px; }
+header { text-align: center; margin: 26px 0 30px; }
+.eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: .35em; color: var(--accent); text-transform: uppercase; }
+h1 { font-family: var(--display); font-weight: 600; font-size: clamp(30px, 6vw, 46px); letter-spacing: .06em; margin: 8px 0 4px; font-variant: small-caps; }
+h1 span { color: var(--accent); }
+.sub { font-style: italic; color: var(--dim); margin: 0; }
+.divider { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: 16px; }
+.divider i { height: 1px; width: 56px; background: linear-gradient(to right, transparent, color-mix(in srgb, var(--accent) 40%, transparent)); }
+.divider i:last-child { transform: scaleX(-1); }
+.divider b { width: 6px; height: 6px; background: var(--accent); transform: rotate(45deg); opacity: .6; }
+section { background: color-mix(in srgb, var(--card) 85%, transparent); border: 1px solid var(--border); border-radius: 8px; padding: 20px 20px 22px; margin: 18px 0; }
+h2 { font-family: var(--mono); font-size: 12px; font-weight: 600; letter-spacing: .18em; text-transform: uppercase; margin: 0 0 4px; display: flex; gap: 10px; align-items: center; }
+h2 .num { color: var(--accent); }
+.hint { color: var(--dim); font-size: 15px; margin: 0 0 14px; }
+.need { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+.need div { border-left: 2px solid var(--border); padding: 2px 0 2px 12px; font-size: 15px; }
+.need div.req { border-color: var(--accent); }
+.tag { font-family: var(--mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; padding: 2px 7px; border-radius: 3px; border: 1px solid var(--border); color: var(--dim); white-space: nowrap; }
+.tag.req { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.tag.rec { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; margin-bottom: 14px; }
+.seg button { font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; padding: 9px 16px; border: 0; background: transparent; color: var(--dim); cursor: pointer; }
+.seg button.on { background: var(--accent); color: #fff; }
+input[type=search], input[type=text], input[type=number], select, textarea {
+  font: inherit; font-size: 16px; width: 100%; padding: 9px 11px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface); color: var(--ink); }
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+.worlds { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; margin-top: 12px; max-height: 470px; overflow: auto; padding: 2px; }
+.world { text-align: left; font: inherit; color: inherit; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 14px; cursor: pointer; transition: border-color .15s, box-shadow .15s, transform .15s; }
+.world:hover { border-color: color-mix(in srgb, var(--accent) 50%, transparent); transform: translateY(-1px); }
+.world.on { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 25%, transparent); }
+.world h3 { font-family: var(--display); font-size: 15px; font-weight: 600; letter-spacing: .04em; margin: 0 0 6px; }
+.world p { font-size: 14px; color: var(--dim); margin: 0 0 10px; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
+.world .badges { display: flex; flex-wrap: wrap; gap: 5px; }
+.slots { display: grid; gap: 10px; }
+.slot { display: grid; grid-template-columns: 1fr auto; gap: 8px 14px; align-items: center; border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; background: var(--card); }
+.slot .title { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; font-weight: 600; }
+.slot .src { grid-column: 1 / -1; font-family: var(--mono); font-size: 12px; color: var(--dim); overflow-wrap: anywhere; }
+.slot .src.set { color: var(--ink); }
+.slot .desc { grid-column: 1 / -1; font-size: 14px; color: var(--dim); margin-top: -4px; }
+.btns { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+button.small, label.small { font-family: var(--mono); font-size: 11px; letter-spacing: .12em; text-transform: uppercase; padding: 7px 11px; border: 1px solid var(--border); border-radius: 5px; background: transparent; color: var(--ink); cursor: pointer; }
+button.small:hover, label.small:hover { border-color: var(--accent); color: var(--accent); }
+label.small input { display: none; }
+.chips { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font-family: var(--mono); font-size: 12px; border: 1px solid var(--border); border-radius: 999px; padding: 3px 4px 3px 10px; display: inline-flex; gap: 6px; align-items: center; }
+.chip button { border: 0; background: transparent; color: var(--dim); cursor: pointer; font-size: 14px; line-height: 1; }
+.hero { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px 14px; }
+.hero label, .field label { display: block; font-family: var(--mono); font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: var(--dim); margin-bottom: 4px; }
+.hero .wide { grid-column: 1 / -1; }
+.toggle { display: flex; gap: 10px; align-items: center; font-size: 15px; margin-bottom: 12px; cursor: pointer; }
+.toggle input { width: 18px; height: 18px; accent-color: var(--accent); }
+.checks { list-style: none; padding: 0; margin: 14px 0 0; display: grid; gap: 6px; }
+.checks li { display: flex; gap: 10px; font-size: 15px; align-items: baseline; }
+.checks li b { font-family: var(--mono); width: 16px; flex: none; text-align: center; }
+.ok b { color: var(--ok); } .warn b { color: var(--warn); } .error b { color: var(--err); } .info b { color: var(--accent); }
+details { margin-top: 12px; font-size: 14px; } summary { cursor: pointer; font-family: var(--mono); font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
+.known { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
+.known span { font-size: 13px; border: 1px solid var(--border); border-radius: 4px; padding: 1px 7px; }
+.launch { display: flex; gap: 12px; align-items: end; flex-wrap: wrap; margin-top: 16px; }
+.launch .field { flex: 1 1 260px; }
+.primary { font-family: var(--mono); font-size: 12px; letter-spacing: .2em; text-transform: uppercase; padding: 13px 24px; border-radius: 6px; border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer; }
+.primary:disabled { opacity: .45; cursor: not-allowed; }
+.primary.ghost { background: transparent; color: var(--accent); }
+.done { text-align: center; padding: 26px 16px; }
+.done h3 { font-family: var(--display); font-size: 24px; margin: 6px 0; }
+.err-box { color: var(--err); font-size: 15px; margin-top: 10px; }
+.status { font-family: var(--mono); font-size: 11px; letter-spacing: .12em; color: var(--dim); text-transform: uppercase; }
+@media (max-width: 560px) { section { padding: 16px 14px; } .slot { grid-template-columns: 1fr; } .btns { justify-content: flex-start; } }
+@media (prefers-reduced-motion: reduce) { .world { transition: none; } .world:hover { transform: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top"><a href="./">← Campaign hub</a><span class="status" id="status"></span></div>
+
+  <header>
+    <div class="eyebrow">Campaign Launcher</div>
+    <h1>Narrative <span>Engine</span></h1>
+    <p class="sub">Choose your world. Bring your files. Begin.</p>
+    <div class="divider"><i></i><b></b><i></i></div>
+  </header>
+
+  <section>
+    <h2>What a campaign needs</h2>
+    <div class="need">
+      <div class="req"><span class="tag req">Required</span><br><b>World lore</b> (.md): the setting, factions, places, people, magic. Every bundled world includes one.</div>
+      <div><span class="tag rec">Recommended</span><br><b>GM rules</b> (.md): how the GM plays. A good default is chosen for you. <b>Opening prompt</b>: how the story starts, often with character creation.</div>
+      <div><span class="tag">Optional</span><br><b>Loot table</b> (.json), <b>character cards</b> (SillyTavern .png/.json) for extra NPCs, and your <b>hero sheet</b>.</div>
+    </div>
+    <p class="hint" style="margin:14px 0 0">Not sure? Pick a bundled world and press <b>Create &amp; Play</b>. Everything else is optional.</p>
+  </section>
+
+  <section>
+    <h2><span class="num">I</span> Choose a world</h2>
+    <div class="seg" role="tablist">
+      <button id="modeBundled" class="on" role="tab">Bundled world</button>
+      <button id="modeOwn" role="tab">My own files</button>
+    </div>
+    <div id="bundledPane">
+      <input type="search" id="search" placeholder="Search worlds: zombie, cyberpunk, Naruto, medieval…" aria-label="Search worlds">
+      <div class="worlds" id="worlds"><p class="hint">Loading worlds…</p></div>
+    </div>
+    <p class="hint" id="ownPane" hidden>Upload your own lore below. Use <code>##</code> headings so each section becomes something the GM can recall. Starting points: <code>Example_Setup/World_compendium/lore_template.md</code>, or the 📖 World Lore Builder on the hub.</p>
+  </section>
+
+  <section>
+    <h2><span class="num">II</span> Campaign files</h2>
+    <p class="hint">Your uploads replace the world's own files. Leave a slot as it is to use the default.</p>
+    <div class="slots">
+      <div class="slot">
+        <div class="title">World lore <span class="tag req">Required</span></div>
+        <div class="btns"><label class="small">Upload .md<input type="file" accept=".md,.markdown,.txt" data-slot="lore"></label><button class="small" data-clear="lore">Reset</button></div>
+        <div class="src" id="src-lore">Not set</div>
+      </div>
+      <div class="slot">
+        <div class="title">GM rules <span class="tag rec">Recommended</span></div>
+        <div class="btns"><label class="small">Upload .md<input type="file" accept=".md,.markdown,.txt" data-slot="rules"></label><button class="small" data-clear="rules">Reset</button></div>
+        <div class="desc">Or choose a built-in ruleset: <select id="ruleset" aria-label="Built-in ruleset" style="width:auto;display:inline-block;margin-left:6px;padding:5px 8px;font-size:14px"></select></div>
+        <div class="src" id="src-rules"></div>
+      </div>
+      <div class="slot">
+        <div class="title">Opening prompt <span class="tag rec">Recommended</span></div>
+        <div class="btns"><label class="small">Upload<input type="file" accept=".md,.markdown,.txt" data-slot="starter"></label><button class="small" data-clear="starter">Reset</button></div>
+        <div class="src" id="src-starter"></div>
+      </div>
+      <div class="slot">
+        <div class="title">Loot table <span class="tag">Optional</span></div>
+        <div class="btns"><label class="small">Upload .json<input type="file" accept=".json" data-slot="loot"></label><button class="small" data-clear="loot">Reset</button></div>
+        <div class="src" id="src-loot"></div>
+      </div>
+      <div class="slot">
+        <div class="title">Character cards <span class="tag">Optional</span></div>
+        <div class="btns"><label class="small">Add cards<input type="file" accept=".png,.json" multiple data-slot="cards"></label></div>
+        <div class="desc">SillyTavern character cards (PNG or JSON) become NPCs; a PNG card's image becomes their portrait.</div>
+        <div class="chips" id="cards"></div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2><span class="num">III</span> Your hero <span class="tag">Optional</span></h2>
+    <label class="toggle"><input type="checkbox" id="gmMakesHero" checked> Let the GM create my character in the story</label>
+    <div class="hero" id="heroFields" hidden>
+      <div><label for="h-name">Name</label><input type="text" id="h-name" autocomplete="off"></div>
+      <div><label for="h-race">Race / origin</label><input type="text" id="h-race"></div>
+      <div><label for="h-class">Class / role</label><input type="text" id="h-class"></div>
+      <div><label for="h-hp">Hit points</label><input type="number" id="h-hp" min="1" placeholder="20"></div>
+      <div class="wide"><label for="h-appearance">Appearance</label><input type="text" id="h-appearance"></div>
+      <div class="wide"><label for="h-personality">Personality</label><input type="text" id="h-personality"></div>
+      <div class="wide"><label for="h-background">Background</label><textarea id="h-background" rows="3"></textarea></div>
+    </div>
+  </section>
+
+  <section id="launchSection">
+    <h2><span class="num">IV</span> Check &amp; launch</h2>
+    <ul class="checks" id="checks"><li class="info"><b>i</b> Choose a world or upload lore to see what the GM will know.</li></ul>
+    <details id="knownBox" hidden><summary>What the GM will know</summary><div id="known"></div></details>
+    <div class="launch">
+      <div class="field"><label for="campName">Campaign name</label><input type="text" id="campName" placeholder="Named after the world if left blank"></div>
+      <button class="primary" id="create" disabled>Create &amp; Play ▸</button>
+    </div>
+    <div class="err-box" id="err" role="alert"></div>
+  </section>
+</div>
+
+<script>
+(() => {
+  const API = location.protocol === 'file:' ? 'http://localhost:3001/api' : 'api';
+  const $ = (id) => document.getElementById(id);
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const state = { mode: 'bundled', worlds: [], world: null, rulesets: [], defaultRuleset: '', uploads: {}, cards: [] };
+
+  const api = async (path, body) => {
+    const res = await fetch(`${API}/${path}`, body ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) } : {});
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    return data;
+  };
+
+  // ── World picker ─────────────────────────────────────────
+  function renderWorlds() {
+    const q = $('search').value.trim().toLowerCase();
+    const list = state.worlds.filter((w) => !q || `${w.name} ${w.pitch}`.toLowerCase().includes(q));
+    $('worlds').innerHTML = list.length ? list.map((w) => `
+      <button class="world${state.world?.id === w.id ? ' on' : ''}" data-world="${esc(w.id)}" aria-pressed="${state.world?.id === w.id}">
+        <h3>${esc(w.name)}</h3><p>${esc(w.pitch)}</p>
+        <div class="badges">${w.hasStarter ? '<span class="tag">Opening prompt</span>' : ''}${w.hasLoot ? '<span class="tag">Loot</span>' : ''}${w.ownRules ? '<span class="tag rec">Own GM rules</span>' : ''}</div>
+      </button>`).join('') : '<p class="hint">No world matches that search.</p>';
+  }
+  $('worlds').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-world]');
+    if (!b) return;
+    state.world = state.worlds.find((w) => w.id === b.dataset.world);
+    $('gmMakesHero').checked = state.world.hasStarter; syncHero();
+    renderWorlds(); renderSlots(); scheduleCheck();
+  });
+  $('search').addEventListener('input', renderWorlds);
+
+  function setMode(mode) {
+    state.mode = mode;
+    $('modeBundled').classList.toggle('on', mode === 'bundled');
+    $('modeOwn').classList.toggle('on', mode === 'own');
+    $('bundledPane').hidden = mode !== 'bundled';
+    $('ownPane').hidden = mode !== 'own';
+    if (mode === 'own') { $('gmMakesHero').checked = false; syncHero(); }
+    renderSlots(); scheduleCheck();
+  }
+  $('modeBundled').onclick = () => setMode('bundled');
+  $('modeOwn').onclick = () => setMode('own');
+  const activeWorld = () => (state.mode === 'bundled' ? state.world : null);
+
+  // ── File slots ───────────────────────────────────────────
+  function renderSlots() {
+    const w = activeWorld();
+    const show = (slot, fallback) => {
+      const up = state.uploads[slot];
+      const el = $(`src-${slot}`);
+      el.classList.toggle('set', !!up || !!fallback);
+      el.textContent = up ? `Uploaded: ${up.name}` : (fallback || 'Not set');
+    };
+    show('lore', w ? `From ${w.name}` : '');
+    const rs = $('ruleset').value;
+    show('rules', rs ? `Built-in: ${rs}` : w?.ownRules ? `From ${w.name} (its own GM rules)` : `Default: ${state.defaultRuleset}`);
+    show('starter', w?.hasStarter ? `From ${w.name}` : 'None: your first message sets the scene');
+    show('loot', w?.hasLoot ? `From ${w.name}` : 'None');
+    $('cards').innerHTML = state.cards.map((c, i) => `<span class="chip">${esc(c.name)}<button title="Remove" aria-label="Remove ${esc(c.name)}" data-rmcard="${i}">×</button></span>`).join('');
+  }
+  $('ruleset').addEventListener('change', () => { renderSlots(); scheduleCheck(); });
+  document.querySelectorAll('[data-clear]').forEach((b) => b.addEventListener('click', () => {
+    delete state.uploads[b.dataset.clear];
+    if (b.dataset.clear === 'rules') $('ruleset').value = '';
+    renderSlots(); scheduleCheck();
+  }));
+  $('cards').addEventListener('click', (e) => {
+    const i = e.target.dataset?.rmcard;
+    if (i !== undefined) { state.cards.splice(Number(i), 1); renderSlots(); scheduleCheck(); }
+  });
+
+  const readText = (file) => file.text();
+  const readDataUrl = (file) => new Promise((ok, bad) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = () => bad(r.error); r.readAsDataURL(file); });
+
+  document.querySelectorAll('input[type=file][data-slot]').forEach((input) => input.addEventListener('change', async () => {
+    const slot = input.dataset.slot;
+    try {
+      for (const file of input.files) {
+        if (file.size > 20 * 1024 * 1024) throw new Error(`${file.name} is larger than 20 MB`);
+        if (slot === 'cards') {
+          const png = /\.png$/i.test(file.name);
+          state.cards.push({ name: file.name, file, ...(png ? { dataUrl: await readDataUrl(file) } : { text: await readText(file) }) });
+        } else {
+          state.uploads[slot] = { name: file.name, text: await readText(file) };
+          if (slot === 'rules') $('ruleset').value = '';
+        }
+      }
+      $('err').textContent = '';
+    } catch (err) { $('err').textContent = err.message; }
+    input.value = '';
+    renderSlots(); scheduleCheck();
+  }));
+
+  // ── Hero ─────────────────────────────────────────────────
+  function syncHero() { $('heroFields').hidden = $('gmMakesHero').checked; }
+  $('gmMakesHero').addEventListener('change', syncHero);
+  const hero = () => {
+    if ($('gmMakesHero').checked || !$('h-name').value.trim()) return null;
+    const v = (id) => $(id).value.trim();
+    return { name: v('h-name'), race: v('h-race'), class: v('h-class'), hp: v('h-hp'), appearance: v('h-appearance'), personality: v('h-personality'), background: v('h-background') };
+  };
+
+  // ── Check & create ───────────────────────────────────────
+  function payload() {
+    const w = activeWorld();
+    return {
+      world: w?.id,
+      loreText: state.uploads.lore?.text,
+      rulesText: state.uploads.rules?.text, rulesName: state.uploads.rules?.name,
+      ruleset: $('ruleset').value || undefined,
+      starterText: state.uploads.starter?.text,
+      lootText: state.uploads.loot?.text,
+      cards: state.cards.map(({ name, dataUrl, text, portrait }) => ({ name, dataUrl, text, portrait })),
+    };
+  }
+
+  let timer, seq = 0;
+  function scheduleCheck() { clearTimeout(timer); timer = setTimeout(check, 250); }
+  async function check() {
+    const mine = ++seq;
+    const body = payload();
+    if (!body.world && !body.loreText) {
+      $('checks').innerHTML = '<li class="info"><b>i</b> Choose a world or upload lore to see what the GM will know.</li>';
+      $('knownBox').hidden = true; $('create').disabled = true; return;
+    }
+    $('status').textContent = 'Checking files…';
+    try {
+      const r = await api('launcher/check', body);
+      if (mine !== seq) return;
+      const icon = { ok: '✓', warn: '!', error: '✕', info: 'i' };
+      $('checks').innerHTML = r.checks.map((c) => `<li class="${c.level}"><b>${icon[c.level]}</b><span>${esc(c.text)}</span></li>`).join('');
+      const group = (title, items) => items.length ? `<p style="margin:10px 0 0"><b>${title}</b></p><div class="known">${items.map((i) => `<span>${esc(i)}</span>`).join('')}</div>` : '';
+      $('known').innerHTML = group('NPCs', r.npcs) + group('Locations', r.locations) + group('Lore topics', r.loreTopics);
+      $('knownBox').hidden = !(r.npcs.length || r.locations.length || r.loreTopics.length);
+      $('create').disabled = !r.ready;
+      $('status').textContent = r.ready ? 'Ready to launch' : 'Fix the marked items';
+    } catch (err) {
+      if (mine !== seq) return;
+      $('checks').innerHTML = `<li class="error"><b>✕</b><span>${esc(err.message)}</span></li>`;
+      $('create').disabled = true; $('status').textContent = '';
+    }
+  }
+
+  async function uploadPortraits() {
+    for (const c of state.cards) {
+      if (!c.dataUrl || c.portrait) continue;
+      const filename = `${c.name.replace(/\.[^.]+$/, '').replace(/[^a-z0-9]/gi, '_').toLowerCase()}_${Date.now()}.png`;
+      try {
+        const r = await api('assets/upload', { dataUrl: c.dataUrl, filename });
+        c.portrait = r.path || r.url || r.relativePath;
+      } catch { /* portrait is optional */ }
+    }
+  }
+
+  $('create').addEventListener('click', async () => {
+    const btn = $('create');
+    btn.disabled = true; btn.textContent = 'Creating…'; $('err').textContent = '';
+    try {
+      await uploadPortraits();
+      const r = await api('launcher/create', { ...payload(), name: $('campName').value.trim() || undefined, hero: hero() });
+      const c = r.campaign;
+      $('launchSection').innerHTML = `
+        <div class="done">
+          <div class="eyebrow">Campaign created</div>
+          <h3>${esc(c.name)}</h3>
+          <p class="hint">${c.loreEntries} lore entries · ${c.npcs} NPCs · ${c.locations} locations</p>
+          <p style="margin:18px 0"><a class="primary" style="text-decoration:none;display:inline-block" href="./">Play now ▸</a></p>
+          <p class="hint" style="margin:0">It's first on the hub: press <b>Enter</b>. Playing with Claude Desktop? Just say <i>"Let's play ${esc(c.name)}"</i>.</p>
+          <p style="margin-top:14px"><a href="launcher.html">Create another</a></p>
+        </div>`;
+    } catch (err) {
+      $('err').textContent = err.message;
+      btn.disabled = false; btn.textContent = 'Create & Play ▸';
+    }
+  });
+
+  // ── Boot ─────────────────────────────────────────────────
+  (async () => {
+    try {
+      const r = await api('launcher/worlds');
+      state.worlds = r.worlds; state.rulesets = r.rulesets; state.defaultRuleset = r.defaultRuleset;
+      $('ruleset').innerHTML = '<option value="">World default</option>' + r.rulesets.map((f) => `<option value="${esc(f)}">${esc(f.replace(/\.md$/, ''))}</option>`).join('');
+      renderWorlds(); renderSlots(); syncHero();
+    } catch (err) {
+      $('worlds').innerHTML = `<p class="err-box">Can't reach Narrative Engine (${esc(err.message)}). Start it with <code>npm run dev</code> and reload.</p>`;
+    }
+  })();
+})();
+</script>
+</body>
+</html>
