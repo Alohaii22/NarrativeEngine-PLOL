@@ -1,0 +1,129 @@
+# Claude as your Game Master (MCP server)
+
+Play a Narrative Engine campaign with **Claude as the GM**, from the Claude
+desktop app, on your regular Claude subscription. No API key is needed.
+
+Claude runs the story in the Claude chat. Narrative Engine keeps everything else:
+the rules, world lore, NPCs, the hero's sheet, and long-term memory of every
+scene. Leave the Narrative Engine window open and it **updates live** as Claude
+plays.
+
+```
+ Claude Desktop  ──MCP (stdio)──▶  server/mcp  ──HTTP──▶  Narrative Engine server  ──▶  data/
+ (you play here,                  (GM tools +            (port 3001, the only          ▲
+  inline panels)                   panels)                 writer to data/)             │
+                                                                                         │
+ Narrative Engine UI  ◀── polls every 2.5 s, reloads when Claude changes the campaign ──┘
+```
+
+## What Claude can do
+
+| Tool | What it does | Panel in chat |
+|---|---|---|
+| `list_campaigns` | Lists your campaigns | |
+| `open_campaign` | Loads the GM rules, world overview, hero, NPCs, notebook and recent turns | Campaign card |
+| `recall_lore` | Searches world lore (semantic search plus keywords) | |
+| `recall_memory` | Searches every past scene in the archive | |
+| `get_npcs` / `update_npc` | Reads and updates the NPC ledger | |
+| `roll_dice` | Real dice: `d20`, `2d6+3`, `4d6kh3`, `1d20+5 adv` | Dice tray with **Roll again** |
+| `show_character` / `update_character` | HP/MP, level, stats, condition, inventory | Character sheet with HP buttons |
+| `update_notebook` | Short-lived scene state (timers, positions, effects) | |
+| `record_turn` | Saves the turn to the chat and long-term memory | Turn summary |
+
+The server also includes a **`run_campaign`** prompt. In Claude Desktop, pick it
+from the **+** menu to start a session with the GM instructions already loaded.
+
+## Setup
+
+You need Node.js 20.19+ and this repo installed (`npm install`), the same as
+for the app itself.
+
+### 1. Start Narrative Engine
+
+```bash
+npm run dev
+```
+
+The MCP server talks to it on `http://127.0.0.1:3001`, so it must be running
+whenever you play. Create your campaign in the app first (**New Campaign**);
+Claude plays existing campaigns.
+
+### 2. Add the server to Claude Desktop
+
+Open Claude Desktop → **Settings → Developer → Edit Config**. That opens
+`claude_desktop_config.json`:
+
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+
+Add the server, using the full path to your copy of the repo:
+
+```json
+{
+  "mcpServers": {
+    "narrative-engine": {
+      "command": "node",
+      "args": ["C:\\Games\\NarrativeEngine-PLOL\\server\\mcp\\index.js"]
+    }
+  }
+}
+```
+
+On macOS/Linux the path looks like `/Users/you/NarrativeEngine-PLOL/server/mcp/index.js`.
+
+Claude Desktop does not use your shell's PATH. If it reports that `node` was not
+found, replace `"node"` with the full path: run `where node` (Windows) or
+`which node` (macOS/Linux) to get it.
+
+Restart Claude Desktop **completely** (quit from the tray or menu bar, not just
+close the window). `narrative-engine` should then appear under the tools
+(slider) icon.
+
+### 3. Play
+
+Start a chat and either pick **run_campaign** from the **+** menu, or say:
+
+> Be my Game Master. List my Narrative Engine campaigns.
+
+Claude asks before using tools the first time. Allow them for this chat, or
+choose "Always allow".
+
+## Other ways to connect
+
+- **Claude Code** (text only, no panels):
+  `claude mcp add narrative-engine -- node /full/path/to/server/mcp/index.js`
+- **Clients that connect by URL:** `npm run mcp:http` serves the same tools
+  at `http://127.0.0.1:3002/mcp` (`MCP_PORT` changes the port). claude.ai
+  connects from Anthropic's servers, so it needs a public HTTPS tunnel in front
+  of that. The server has no authentication, so don't expose it publicly
+  without adding some.
+- **A Narrative Engine server on another port or machine:** set
+  `NARRATIVE_ENGINE_URL` (default `http://127.0.0.1:3001`) in the `env` block
+  of the Claude Desktop config.
+
+## Good to know
+
+- **Saving happens through `record_turn`.** Claude is told to call it after every
+  narration. If you notice it skipped one, say "record that turn". An
+  unrecorded turn is missing from the app and from long-term memory.
+- **Play in one place at a time.** While Claude is running a campaign, don't
+  also send turns or edit that campaign in the Narrative Engine window. The
+  window is a live display; edits from both sides at the same moment can
+  overwrite each other.
+- **Memory search warms up.** Semantic recall needs the engine's embedding
+  model, which downloads on first run. Until it's ready, recall falls back to
+  keyword search, and scenes archived meanwhile are re-indexed later.
+- **Panels need Claude Desktop or claude.ai.** Other clients get the same
+  information as text.
+- **Updating panel code:** Claude Desktop caches panels aggressively. After
+  changing `server/mcp/views.js`, fully restart Claude Desktop.
+
+## Files
+
+- `server/mcp/index.js`: entry point (stdio, or `--http`)
+- `server/mcp/server.js`: tools, panel resource, `run_campaign` prompt, GM instructions
+- `server/mcp/gm.js`: game logic (recall, NPCs, character, notebook, turns)
+- `server/mcp/dice.js`: dice notation
+- `server/mcp/views.js`: the inline panel (MCP Apps)
+- `server/mcp/engineClient.js`: HTTP client for the engine; tags writes with `X-NE-Writer: mcp`
+- `server/routes/externalRevision.js` and `src/hooks/useExternalCampaignSync.ts`: live sync to the open UI

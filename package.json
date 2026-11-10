@@ -16,10 +16,14 @@
     "test:run": "vitest run",
     "test:base-app-gate": "vitest run src/services/turn/__tests__/baseAppGate/baseAppGate.test.ts",
     "test:coverage": "vitest run --coverage",
-    "i18n:check": "node scripts/i18n-check.mjs"
+    "i18n:check": "node scripts/i18n-check.mjs",
+    "mcp": "node server/mcp/index.js",
+    "mcp:http": "node server/mcp/index.js --http"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.0.1",
+    "@modelcontextprotocol/ext-apps": "^1.7.5",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@narrative/engine": "file:packages/engine",
     "@tailwindcss/typography": "^0.5.19",
     "better-sqlite3": "^12.8.0",
@@ -35,6 +39,7 @@
     "remark-gfm": "^4.0.1",
     "sqlite-vec": "^0.1.9",
     "undici": "^7.29.1",
+    "zod": "^4.6.7",
     "zustand": "^5.0.11"
   },
   "devDependencies": {

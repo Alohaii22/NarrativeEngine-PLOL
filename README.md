@@ -133,6 +133,12 @@ Editing an existing campaign re-opens the same form. Uploading a new Lore, Rules
 
 ---
 
+## Claude as your Game Master (no API key)
+
+Run a campaign with Claude as the GM from the **Claude desktop app**, using your Claude subscription. Claude narrates in chat, with inline dice, character and turn panels. Narrative Engine keeps the rules, lore, NPCs and long-term memory, and its window updates live as you play. Setup takes about two minutes: see **[docs/CLAUDE_MCP.md](docs/CLAUDE_MCP.md)**.
+
+---
+
 ## Updating to the Latest Version
 
 When a new version comes out, you can update your local copy without losing your campaigns or settings.

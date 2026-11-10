@@ -28,6 +28,7 @@ import { VaultUnlockModal } from './components/VaultUnlockModal';
 import { WorldMapTravelBridge } from './components/WorldMapTravelBridge';
 import { hydrateCampaign } from './store/campaignHydrator';
 import { useRulesIndexer } from './hooks/useRulesIndexer';
+import { useExternalCampaignSync } from './hooks/useExternalCampaignSync';
 import { useFlushSavesOnExit } from './hooks/useFlushSavesOnExit';
 import { loadBackground } from './services/background/backgroundManager';
 import { refreshMods } from './services/mods/modBootstrap';
@@ -49,6 +50,8 @@ export default function App() {
 
   // True once campaign state has been hydrated into Zustand (or there's no campaign to hydrate)
   const [campaignLoaded, setCampaignLoaded] = useState(false);
+  // Claude-as-GM (server/mcp): pick up turns written from Claude Desktop.
+  useExternalCampaignSync(activeCampaignId, campaignLoaded);
   const [isCheckingVault, setIsCheckingVault] = useState(false);
 
   // Initial load: check vault status after settings load
