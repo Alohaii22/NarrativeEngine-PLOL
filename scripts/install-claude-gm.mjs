@@ -24,8 +24,16 @@ const SERVER_NAME = 'narrative-engine';
 export function configPaths(platform = process.platform, env = process.env, home = os.homedir()) {
     if (platform === 'win32') {
         const paths = [path.join(env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'Claude', 'claude_desktop_config.json')];
-        // The Microsoft Store build keeps its config in a virtualized folder.
-        const packages = path.join(env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'), 'Packages');
+        const local = env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
+        // Current Windows builds keep everything (config, extensions) in
+        // %LOCALAPPDATA%\Claude-Data\<install id>\.
+        try {
+            for (const dir of fs.readdirSync(path.join(local, 'Claude-Data'), { withFileTypes: true })) {
+                if (dir.isDirectory()) paths.push(path.join(local, 'Claude-Data', dir.name, 'claude_desktop_config.json'));
+            }
+        } catch { /* older build */ }
+        // Earlier Microsoft Store builds used a virtualized folder.
+        const packages = path.join(local, 'Packages');
         try {
             for (const dir of fs.readdirSync(packages)) {
                 if (/^Claude_/i.test(dir)) paths.push(path.join(packages, dir, 'LocalCache', 'Roaming', 'Claude', 'claude_desktop_config.json'));

@@ -81,6 +81,7 @@ if (!vault.isUnlocked()) {
 //     elsewhere.
 const BIND_HOST = process.env.HOST || '127.0.0.1';
 const ALLOWED_ORIGINS = new Set(['http://localhost:5173']);
+if (process.env.NE_UI_PORT) ALLOWED_ORIGINS.add(`http://localhost:${Number(process.env.NE_UI_PORT)}`);
 if (process.versions.electron) ALLOWED_ORIGINS.add('null');
 if (process.env.ALLOWED_ORIGINS) {
     process.env.ALLOWED_ORIGINS.split(',').forEach(o => ALLOWED_ORIGINS.add(o.trim()));

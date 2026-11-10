@@ -1,4 +1,6 @@
 import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { Router } from 'express';
 import { wrapAsync } from '../lib/asyncHandler.js';
 import { listWorlds, findWorld, listRulesets, readRuleset, worldBlurb, DEFAULT_RULESET } from '../mcp/worlds.js';
@@ -11,6 +13,7 @@ import { createEngineClient } from '../mcp/engineClient.js';
  * check a set of campaign files before committing to them, and create the
  * campaign — with the same campaign kit the New Campaign form uses.
  */
+const INSTALL_FOLDER = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const MAX_TEXT = 8 * 1024 * 1024;
 const MAX_CARDS = 30;
 
@@ -93,6 +96,12 @@ async function build(sources) {
 export function createLauncherRouter({ enginePort = 3001 } = {}) {
     const router = Router();
     const client = createEngineClient({ baseUrl: `http://127.0.0.1:${enginePort}` });
+
+    // Which install is answering on this port. Play_With_Claude uses it to tell
+    // "already running" from "a copy in another folder has the port".
+    router.get('/api/launcher/info', wrapAsync((_req, res) => {
+        res.json({ app: 'narrative-engine', folder: INSTALL_FOLDER, port: enginePort, pid: process.pid });
+    }));
 
     router.get('/api/launcher/worlds', wrapAsync((_req, res) => {
         res.json({

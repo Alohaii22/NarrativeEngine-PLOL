@@ -28,7 +28,7 @@ async function isUp(baseUrl, fetchImpl) {
 }
 
 /** Is anything at all listening there? (Tells "engine is down" from "another program has the port".) */
-function portTaken(baseUrl) {
+export function portTaken(baseUrl) {
     return new Promise((resolve) => {
         const { hostname, port } = new URL(baseUrl);
         const socket = net.connect({ host: hostname, port: Number(port) || 80 });

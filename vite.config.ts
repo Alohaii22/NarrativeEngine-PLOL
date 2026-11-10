@@ -10,6 +10,11 @@ import packageJson from './package.json'
 const projectRoot = fileURLToPath(new URL('.', import.meta.url)).replace(/\\/g, '/').replace(/\/$/, '')
 const rootGlob = (dir: string) => `${projectRoot}/${dir}/**`
 
+// 3001 / 5173 are what everything expects. The overrides exist so a second,
+// throwaway copy (launcher tests) can run beside a live one.
+const enginePort = Number(process.env.NE_ENGINE_PORT) || 3001
+const uiPort = Number(process.env.NE_UI_PORT) || 5173
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   define: {
@@ -21,6 +26,8 @@ export default defineConfig({
   base: './',
   server: {
     host: process.env.HOST || '127.0.0.1',
+    port: uiPort,
+    strictPort: !!process.env.NE_UI_PORT,
     // The dev server serves any file under the project root, and `data/` is
     // under the project root: settings.json, apikeys.vault, embeddings.db and
     // every campaign were reachable at http://localhost:5173/data/… (with a
@@ -49,11 +56,11 @@ export default defineConfig({
     },
     proxy: {
       '/api': {
-        target: 'http://localhost:3001',
+        target: `http://localhost:${enginePort}`,
         changeOrigin: true,
       },
       '/assets': {
-        target: 'http://localhost:3001',
+        target: `http://localhost:${enginePort}`,
         changeOrigin: true,
       },
     },

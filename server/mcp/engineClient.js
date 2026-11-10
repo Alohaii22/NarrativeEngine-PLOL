@@ -6,7 +6,7 @@
  * sees every change. Every write carries `X-NE-Writer: mcp` so the UI knows to
  * re-hydrate (server/routes/externalRevision.js).
  */
-export const DEFAULT_ENGINE_URL = 'http://127.0.0.1:3001';
+export const DEFAULT_ENGINE_URL = `http://127.0.0.1:${Number(process.env.NE_ENGINE_PORT) || 3001}`;
 
 export class EngineUnavailableError extends Error {}
 
