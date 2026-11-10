@@ -3,10 +3,18 @@
  * client (engineClient.js), so it can be tested against a fake.
  */
 import crypto from 'crypto';
+import { EngineUnavailableError } from './engineClient.js';
 
 const MAX_NOTEBOOK_NOTES = 50;
 const MAX_RULES_CHARS = 60_000;
-const MAX_LORE_CHARS = 4_000;
+// Size caps on what a tool hands back. Everything returned stays in Claude's
+// context for the rest of the session, so long campaigns need these tight.
+const MAX_LORE_CHARS = 2_400;
+const MAX_OVERVIEW_ENTRY_CHARS = 2_000;
+const MAX_OVERVIEW_CHARS = 8_000;
+const MAX_SCENE_CHARS = 1_800;
+const MAX_RECENT_TURN_CHARS = 1_200;
+const MAX_LAST_TURN_CHARS = 4_000;
 const NPC_TEXT_FIELDS = ['aliases', 'appearance', 'faction', 'storyRelevance', 'status', 'voice', 'personality'];
 const NPC_CONDITIONS = ['healthy', 'wounded', 'critical', 'dead'];
 const INVENTORY_CATEGORIES = ['weapon', 'armor', 'consumable', 'currency', 'key', 'misc', 'equipped'];
@@ -24,10 +32,32 @@ function words(text) {
 
 const norm = (s) => String(s ?? '').trim().toLowerCase();
 
+/** For optional reads: a missing archive is an empty one, a dead engine is an error. */
+function rethrowIfDown(err) {
+    if (err instanceof EngineUnavailableError) throw err;
+    return [];
+}
+
 async function requireState(client, campaignId) {
     const state = await client.getState(campaignId);
     if (!state) throw new Error(`No campaign "${campaignId}". Call list_campaigns to see the ids.`);
     return state;
+}
+
+/**
+ * Every change here is a read-modify-write of a whole file through the engine,
+ * and Claude often sends several tool calls at once (HP change + notebook +
+ * record_turn). Without a queue the last write wins and the others are
+ * silently lost, so writes to one campaign run one at a time.
+ */
+const queues = new Map();
+function serialize(campaignId, fn) {
+    const prev = queues.get(campaignId) ?? Promise.resolve();
+    const run = prev.then(fn, fn);
+    const tail = run.catch(() => {});
+    queues.set(campaignId, tail);
+    tail.then(() => { if (queues.get(campaignId) === tail) queues.delete(campaignId); });
+    return run;
 }
 
 /** PUT /state is a full overwrite: always send every field back. */
@@ -88,26 +118,33 @@ function npcSummary(npc) {
     };
 }
 
-export async function openCampaign(client, campaignId, { recentTurns = 8 } = {}) {
+export async function openCampaign(client, campaignId, { recentTurns = 6 } = {}) {
     const [meta, state, lore, npcs, archive] = await Promise.all([
         client.getCampaign(campaignId),
         client.getState(campaignId),
         client.getLore(campaignId),
         client.getNpcs(campaignId),
-        client.getArchiveIndex(campaignId).catch(() => []),
+        client.getArchiveIndex(campaignId).catch(rethrowIfDown),
     ]);
     if (!meta && !state) throw new Error(`No campaign "${campaignId}". Call list_campaigns to see the ids.`);
     const context = state?.context ?? {};
     const messages = (state?.messages ?? []).filter((m) => (m.role === 'user' || m.role === 'assistant') && !m.ephemeral && m.content);
-    const recent = messages.slice(-recentTurns * 2).map((m) => ({
+    // Older turns are clipped hard (recall_memory has the full text); the last
+    // GM reply comes back whole so play resumes exactly where it stopped.
+    const tail = recentTurns > 0 ? messages.slice(-recentTurns * 2) : [];
+    const recent = tail.map((m, i) => ({
         role: m.role === 'user' ? 'player' : 'gm',
-        text: clip(m.displayContent || m.content, 3_000),
+        text: clip(m.displayContent || m.content, i === tail.length - 1 ? MAX_LAST_TURN_CHARS : MAX_RECENT_TURN_CHARS),
     }));
     const chunks = (lore ?? []).filter((c) => !c.disabled);
-    const alwaysLore = chunks
-        .filter((c) => c.alwaysInclude || c.ragMode === 'always' || c.category === 'world_overview')
-        .slice(0, 8)
-        .map((c) => ({ header: c.header, content: clip(c.content, MAX_LORE_CHARS) }));
+    const alwaysLore = [];
+    let overviewChars = 0;
+    for (const c of chunks.filter((x) => x.alwaysInclude || x.ragMode === 'always' || x.category === 'world_overview')) {
+        if (alwaysLore.length >= 8 || overviewChars >= MAX_OVERVIEW_CHARS) break;
+        const content = clip(c.content, Math.min(MAX_OVERVIEW_ENTRY_CHARS, MAX_OVERVIEW_CHARS - overviewChars));
+        overviewChars += content.length;
+        alwaysLore.push({ header: c.header, content });
+    }
 
     return {
         campaign: { id: campaignId, name: meta?.name ?? campaignId },
@@ -119,6 +156,7 @@ export async function openCampaign(client, campaignId, { recentTurns = 8 } = {})
         sceneNote: context.sceneNoteActive ? context.sceneNote || '' : '',
         npcs: (npcs ?? []).filter((n) => !n.isPC).map(npcSummary).slice(0, 60),
         scenesArchived: Array.isArray(archive) ? archive.length : 0,
+        turnsPlayed: messages.filter((m) => m.role === 'assistant').length,
         recentTurns: recent,
         starter: messages.length === 0 ? (context.starter || '') : '',
         isNewCampaign: messages.length === 0,
@@ -137,7 +175,7 @@ export function keywordScore(query, text, keywords = []) {
     return score;
 }
 
-export async function recallLore(client, campaignId, query, limit = 5) {
+export async function recallLore(client, campaignId, query, limit = 4) {
     const chunks = ((await client.getLore(campaignId)) ?? []).filter((c) => !c.disabled);
     const byId = new Map(chunks.map((c) => [c.id, c]));
     let ids = [];
@@ -148,7 +186,11 @@ export async function recallLore(client, campaignId, query, limit = 5) {
             ids = res.loreIds.filter((id) => byId.has(id));
             semantic = ids.length > 0;
         }
-    } catch { /* vector search is optional; keyword recall below always works */ }
+    } catch (err) {
+        // Vector search is optional (keyword recall below always works), but an
+        // engine that is down must be reported, not read as "nothing found".
+        if (err instanceof EngineUnavailableError) throw err;
+    }
 
     const keywordHits = chunks
         .map((c) => ({ c, s: keywordScore(query, `${c.header} ${c.content}`, [...(c.triggerKeywords ?? []), ...(c.linkedEntities ?? [])]) }))
@@ -167,7 +209,7 @@ export async function recallLore(client, campaignId, query, limit = 5) {
     };
 }
 
-export async function recallMemory(client, campaignId, query, limit = 4) {
+export async function recallMemory(client, campaignId, query, limit = 3) {
     let sceneIds = [];
     let semantic = false;
     try {
@@ -176,10 +218,13 @@ export async function recallMemory(client, campaignId, query, limit = 4) {
             sceneIds = res.sceneIds.slice(0, limit);
             semantic = sceneIds.length > 0;
         }
-    } catch { /* fall back to keywords */ }
+    } catch (err) {
+        if (err instanceof EngineUnavailableError) throw err;
+        // otherwise fall back to keywords
+    }
 
     if (sceneIds.length < limit) {
-        const index = (await client.getArchiveIndex(campaignId).catch(() => [])) ?? [];
+        const index = (await client.getArchiveIndex(campaignId).catch(rethrowIfDown)) ?? [];
         const hits = index
             .map((e) => ({ id: e.sceneId, s: keywordScore(query, e.userSnippet, [...(e.keywords ?? []), ...(e.npcsMentioned ?? []), ...(e.witnesses ?? [])]) }))
             .filter((x) => x.s > 0 && !sceneIds.includes(x.id))
@@ -190,7 +235,7 @@ export async function recallMemory(client, campaignId, query, limit = 4) {
     return {
         query,
         method: semantic ? 'semantic+keyword' : 'keyword',
-        scenes: scenes.map((s) => ({ sceneId: s.sceneId, content: clip(s.content, 3_000) })),
+        scenes: scenes.map((s) => ({ sceneId: s.sceneId, content: clip(s.content, MAX_SCENE_CHARS) })),
     };
 }
 
@@ -217,9 +262,17 @@ export async function getNpcs(client, campaignId, names) {
     };
 }
 
-export async function upsertNpc(client, campaignId, input) {
+export function upsertNpc(client, campaignId, input) {
+    return serialize(campaignId, () => upsertNpcNow(client, campaignId, input));
+}
+
+async function upsertNpcNow(client, campaignId, input) {
     const name = String(input?.name ?? '').trim();
     if (!name) throw new Error('NPC name is required');
+    if (input.condition !== undefined && !NPC_CONDITIONS.includes(input.condition)) {
+        throw new Error(`condition must be one of ${NPC_CONDITIONS.join(', ')}`);
+    }
+    await requireState(client, campaignId);
     const npcs = (await client.getNpcs(campaignId)) ?? [];
     let npc = findNpc(npcs.filter((n) => !n.isPC), name);
     const created = !npc;
@@ -231,9 +284,9 @@ export async function upsertNpc(client, campaignId, input) {
     for (const f of NPC_TEXT_FIELDS) {
         if (typeof input[f] === 'string' && input[f] !== npc[f]) { npc[f] = input[f]; changed.push(f); }
     }
-    if (input.condition !== undefined) {
-        if (!NPC_CONDITIONS.includes(input.condition)) throw new Error(`condition must be one of ${NPC_CONDITIONS.join(', ')}`);
-        if (npc.condition !== input.condition) { npc.condition = input.condition; changed.push('condition'); }
+    if (input.condition !== undefined && npc.condition !== input.condition) {
+        npc.condition = input.condition;
+        changed.push('condition');
     }
     if (created || changed.length) await client.putNpcs(campaignId, npcs);
     return { name: npc.name, created, changed };
@@ -243,7 +296,14 @@ export async function upsertNpc(client, campaignId, input) {
 
 const clampInt = (v, lo, hi) => Math.max(lo, Math.min(hi, Math.round(Number(v))));
 
-export async function updateCharacter(client, campaignId, patch = {}) {
+export function updateCharacter(client, campaignId, patch = {}) {
+    return serialize(campaignId, () => updateCharacterNow(client, campaignId, patch));
+}
+
+async function updateCharacterNow(client, campaignId, patch) {
+    if (patch.condition !== undefined && !NPC_CONDITIONS.includes(patch.condition)) {
+        throw new Error(`condition must be one of ${NPC_CONDITIONS.join(', ')}`);
+    }
     const state = await requireState(client, campaignId);
     const context = state.context ?? (state.context = {});
     const data = context.characterProfileData ?? (context.characterProfileData = {
@@ -254,14 +314,24 @@ export async function updateCharacter(client, campaignId, patch = {}) {
 
     if (patch.hpDelta !== undefined || patch.hpMax !== undefined || patch.hpSet !== undefined) {
         const hp = data.hp ?? (data.hp = { current: 10, max: 10 });
-        if (patch.hpMax !== undefined) hp.max = clampInt(patch.hpMax, 1, 1_000_000);
+        // Raising the maximum of an unhurt hero (character creation, a level-up
+        // at full health) keeps them at full health.
+        const wasFull = hp.current >= hp.max;
+        if (patch.hpMax !== undefined) {
+            hp.max = clampInt(patch.hpMax, 1, 1_000_000);
+            hp.current = wasFull ? hp.max : Math.min(hp.current, hp.max);
+        }
         if (patch.hpSet !== undefined) hp.current = clampInt(patch.hpSet, 0, hp.max);
         if (patch.hpDelta !== undefined) hp.current = clampInt(hp.current + Number(patch.hpDelta), 0, hp.max);
         log.push(`HP ${hp.current}/${hp.max}`);
     }
     if (patch.mpDelta !== undefined || patch.mpMax !== undefined) {
         const mp = data.mp ?? (data.mp = { current: 0, max: 0 });
-        if (patch.mpMax !== undefined) mp.max = clampInt(patch.mpMax, 0, 1_000_000);
+        const wasFull = mp.current >= mp.max;
+        if (patch.mpMax !== undefined) {
+            mp.max = clampInt(patch.mpMax, 0, 1_000_000);
+            mp.current = wasFull ? mp.max : Math.min(mp.current, mp.max);
+        }
         if (patch.mpDelta !== undefined) mp.current = clampInt(mp.current + Number(patch.mpDelta), 0, mp.max);
         log.push(`MP ${mp.current}/${mp.max}`);
     }
@@ -290,9 +360,8 @@ export async function updateCharacter(client, campaignId, patch = {}) {
     if (Array.isArray(patch.abilities)) { data.abilities = patch.abilities.map(String); log.push('abilities'); }
     if (Array.isArray(patch.traits)) { data.traits = patch.traits.map(String); log.push('traits'); }
     if (typeof patch.notes === 'string') { data.notes = patch.notes; log.push('notes'); }
-    if (patch.condition !== undefined && context.playerCharacter) {
-        if (!NPC_CONDITIONS.includes(patch.condition)) throw new Error(`condition must be one of ${NPC_CONDITIONS.join(', ')}`);
-        context.playerCharacter.condition = patch.condition;
+    if (patch.condition !== undefined) {
+        context.playerCharacter = { ...(context.playerCharacter ?? { id: newId('pc'), name: data.name || 'Hero' }), condition: patch.condition };
         log.push(`condition ${patch.condition}`);
     }
 
@@ -324,8 +393,12 @@ export async function updateCharacter(client, campaignId, patch = {}) {
     return { changes: log, sheet: characterSheet(context) };
 }
 
-export async function updateNotebook(client, campaignId, actions = []) {
-    if (actions.length > 5) throw new Error('At most 5 notebook actions per call');
+export function updateNotebook(client, campaignId, actions = []) {
+    if (actions.length > 5) return Promise.reject(new Error('At most 5 notebook actions per call'));
+    return serialize(campaignId, () => updateNotebookNow(client, campaignId, actions));
+}
+
+async function updateNotebookNow(client, campaignId, actions) {
     const state = await requireState(client, campaignId);
     const context = state.context ?? (state.context = {});
     let notes = [...(context.notebook ?? [])];
@@ -349,11 +422,26 @@ export async function updateNotebook(client, campaignId, actions = []) {
  * the GM's narration become chat messages, and the scene goes into the
  * long-term archive (keyword index + vector embedding) so recall finds it later.
  */
-export async function recordTurn(client, campaignId, { playerAction, narration, importance }) {
+export function recordTurn(client, campaignId, turn = {}) {
+    const gm = String(turn.narration ?? '').trim();
+    if (!gm) return Promise.reject(new Error('narration is required: pass the exact narration you showed the player'));
+    return serialize(campaignId, () => recordTurnNow(client, campaignId, { ...turn, narration: gm }));
+}
+
+async function recordTurnNow(client, campaignId, { playerAction, narration: gm, importance }) {
     const player = String(playerAction ?? '').trim();
-    const gm = String(narration ?? '').trim();
-    if (!gm) throw new Error('narration is required: pass the exact narration you showed the player');
     const state = await requireState(client, campaignId);
+    const result = (sceneId, duplicate) => ({
+        sceneId: sceneId ?? null,
+        turnNumber: (state.messages ?? []).filter((m) => m.role === 'assistant').length,
+        duplicate,
+        character: characterSheet(state.context),
+        notebook: (state.context?.notebook ?? []).map((n) => n.text),
+    });
+
+    // A retried call (a timeout, "did that save?") must not write the turn twice.
+    const last = (state.messages ?? []).filter((m) => m.role === 'assistant').at(-1);
+    if (last && String(last.content).trim() === gm) return result(last.sceneId, true);
 
     let sceneId;
     try {
@@ -370,14 +458,7 @@ export async function recordTurn(client, campaignId, { playerAction, narration, 
     messages.push({ id: newId('msg'), role: 'assistant', content: gm, timestamp: now + 1, ...(sceneId ? { sceneId } : {}) });
     await saveState(client, campaignId, state);
 
-    return {
-        sceneId: sceneId ?? null,
-        turnNumber: messages.filter((m) => m.role === 'assistant').length,
-        playerAction: player,
-        narration: gm,
-        character: characterSheet(state.context),
-        notebook: (state.context?.notebook ?? []).map((n) => n.text),
-    };
+    return result(sceneId, false);
 }
 
 // ── New campaigns ───────────────────────────────────────────────────────

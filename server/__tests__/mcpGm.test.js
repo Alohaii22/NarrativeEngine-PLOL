@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { rollDice, describeRoll, DiceError } from '../mcp/dice.js';
+import { rollDice, describeRoll, DiceError, outcomeTier } from '../mcp/dice.js';
 import * as gm from '../mcp/gm.js';
 import { createEngineClient, EngineUnavailableError } from '../mcp/engineClient.js';
 import { panelHtml, PANEL_URI } from '../mcp/views.js';
@@ -84,6 +84,50 @@ describe('rollDice', () => {
         expect(() => rollDice('5')).toThrow(DiceError);
         expect(() => rollDice('1000d6')).toThrow(DiceError);
         expect(() => rollDice('d1')).toThrow(DiceError);
+        expect(() => rollDice('')).toThrow(DiceError);
+        expect(() => rollDice('d20+')).toThrow(DiceError);
+        expect(() => rollDice('2d6kh')).toThrow(DiceError);
+        expect(() => rollDice('1d20+3 (stealth)')).toThrow(/d20, 2d6\+3/);
+    });
+
+    it('reads the notation Claude tends to write', () => {
+        expect(rollDice('D20', fixed(0.5)).total).toBe(11);
+        expect(rollDice(' 2d6 + 3 ', fixed(0, 0)).total).toBe(5);
+        expect(rollDice('d20-2', fixed(0)).total).toBe(-1);
+        expect(rollDice('1d8+1d6+2', fixed(0.99, 0)).total).toBe(8 + 1 + 2);
+        expect(rollDice('3d6-1d4', fixed(0, 0, 0, 0.99)).total).toBe(3 - 4);
+        expect(rollDice('2d20kl1', fixed(0.99, 0)).groups[0]).toMatchObject({ rolls: [1], dropped: [20] });
+        expect(rollDice('1d20 Advantage', fixed(0, 0.5)).mode).toBe('advantage');
+        expect(rollDice('1d20+2 disadvantage', fixed(0.5, 0)).total).toBe(3);
+    });
+
+    it('stays inside the die for every random value', () => {
+        for (const r of [0, 0.0001, 0.5, 0.9999, 0.999999999]) {
+            const roll = rollDice('d20', () => r).total;
+            expect(roll).toBeGreaterThanOrEqual(1);
+            expect(roll).toBeLessThanOrEqual(20);
+        }
+        const many = rollDice('100d6').groups[0].rolls;
+        expect(many).toHaveLength(100);
+        expect(many.every((n) => Number.isInteger(n) && n >= 1 && n <= 6)).toBe(true);
+    });
+
+    it('advantage only doubles a single die, and keep-rules win over it', () => {
+        const two = rollDice('2d6 adv', fixed(0, 0.99));
+        expect(two.groups[0].rolls).toEqual([1, 6]);
+        expect(two.groups[0].dropped).toEqual([]);
+        expect(rollDice('4d6kh3 adv', fixed(0, 0.5, 0.99, 0.2)).total).toBe(12);
+    });
+
+    it('reports the outcome tier of a plain d20 and nothing for other dice', () => {
+        const tierAt = (n) => rollDice('d20', () => (n - 1) / 20).tier;
+        expect([1, 2, 3, 6, 7, 15, 16, 19, 20].map(tierAt)).toEqual([
+            'Catastrophe', 'Catastrophe', 'Failure', 'Failure', 'Success', 'Success', 'Triumph', 'Triumph', 'Narrative Boon',
+        ]);
+        expect([1, 20].map(outcomeTier)).toEqual(['Catastrophe', 'Narrative Boon']);
+        expect(rollDice('2d6').tier).toBeNull();
+        expect(rollDice('d100').tier).toBeNull();
+        expect(describeRoll(rollDice('d20+3', () => 0.5), 'Climb')).toBe('Climb: d20+3 → d20: [11] + 3 = **14** · tier: Success');
     });
 });
 
@@ -161,6 +205,101 @@ describe('GM operations', () => {
         const reopened = await gm.openCampaign(client, 'c1');
         expect(reopened.isNewCampaign).toBe(false);
         expect(reopened.recentTurns.map((r) => r.role)).toEqual(['player', 'gm']);
+    });
+
+    it('keeps every change when Claude sends tool calls at the same time', async () => {
+        // Slow engine: without the per-campaign queue each call reads the same
+        // old state and the last write wipes the others out.
+        const { getState, putState } = client;
+        const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+        client.getState = async (id) => { await wait(5); return getState(id); };
+        client.putState = async (id, s) => { await wait(5); return putState(id, s); };
+        await Promise.all([
+            gm.updateNotebook(client, 'c1', [{ action: 'add', text: 'Torch burns out in 3 turns' }]),
+            gm.updateCharacter(client, 'c1', { hpDelta: -4 }),
+            gm.recordTurn(client, 'c1', { playerAction: 'I light the torch.', narration: 'The dark pulls back.' }),
+            gm.updateCharacter(client, 'c1', { inventory: [{ action: 'add', name: 'Torch' }] }),
+            gm.upsertNpc(client, 'c1', { name: 'Mira', status: 'holding the rope' }),
+            gm.upsertNpc(client, 'c1', { name: 'Oren', status: 'on watch' }),
+        ]);
+        expect(db.state.context.notebook.map((n) => n.text)).toEqual(['Torch burns out in 3 turns']);
+        expect(db.state.context.characterProfileData.hp.current).toBe(10);
+        expect(db.state.context.inventoryItems.map((i) => i.name)).toEqual(['Torch']);
+        expect(db.state.messages.map((m) => m.role)).toEqual(['user', 'assistant']);
+        expect(db.npcs.map((n) => n.name)).toEqual(['Vash', 'Mira', 'Oren']);
+    });
+
+    it('a failed call does not block the ones queued behind it', async () => {
+        const results = await Promise.allSettled([
+            gm.updateCharacter(client, 'c1', { condition: 'sleepy' }),
+            gm.updateCharacter(client, 'c1', { hpDelta: -1 }),
+        ]);
+        expect(results.map((r) => r.status)).toEqual(['rejected', 'fulfilled']);
+        expect(db.state.context.characterProfileData.hp.current).toBe(13);
+    });
+
+    it('does not save the same turn twice when a call is retried', async () => {
+        const turn = { playerAction: 'I knock.', narration: 'The door opens a crack.' };
+        const first = await gm.recordTurn(client, 'c1', turn);
+        const again = await gm.recordTurn(client, 'c1', { ...turn, narration: '  The door opens a crack.\n' });
+        expect(first).toMatchObject({ turnNumber: 1, duplicate: false, sceneId: '001' });
+        expect(again).toMatchObject({ turnNumber: 1, duplicate: true, sceneId: '001' });
+        expect(db.state.messages).toHaveLength(2);
+        expect(db.index).toHaveLength(1);
+        const next = await gm.recordTurn(client, 'c1', { playerAction: 'I knock.', narration: 'Nobody answers this time.' });
+        expect(next).toMatchObject({ turnNumber: 2, duplicate: false });
+    });
+
+    it('persists a turn in the shape the app reads, and returns only a receipt', async () => {
+        db.state.condenser = { condensedUpToIndex: 3 };
+        const t = await gm.recordTurn(client, 'c1', { playerAction: '', narration: 'Opening scene.', importance: 7 });
+        expect(t).not.toHaveProperty('narration');
+        expect(t.character.name).toBe('Kira');
+        const saved = db.puts.at(-1);
+        expect(saved.messages).toEqual([expect.objectContaining({ role: 'assistant', content: 'Opening scene.', sceneId: '001', id: expect.stringMatching(/^msg_/), timestamp: expect.any(Number) })]);
+        // The rest of the campaign state rides along untouched.
+        expect(saved.context.rulesRaw).toBe('Be gritty.');
+        expect(saved.condenser).toEqual({ condensedUpToIndex: 3 });
+        expect(saved.pinnedExcerpts).toEqual([{ id: 'p1' }]);
+    });
+
+    it('refuses to write to a campaign that does not exist', async () => {
+        await expect(gm.recordTurn(client, 'nope', { playerAction: 'x', narration: 'y' })).rejects.toThrow(/list_campaigns/);
+        await expect(gm.updateCharacter(client, 'nope', { hpDelta: 1 })).rejects.toThrow(/list_campaigns/);
+        await expect(gm.updateNotebook(client, 'nope', [{ action: 'clear' }])).rejects.toThrow(/list_campaigns/);
+        await expect(gm.upsertNpc(client, 'nope', { name: 'Ghost' })).rejects.toThrow(/list_campaigns/);
+        expect(db.puts).toHaveLength(0);
+        expect(db.index).toHaveLength(0);
+    });
+
+    it('creates a hero at full health and keeps a hurt hero hurt', async () => {
+        db.state.context.characterProfileData = undefined;
+        db.state.context.playerCharacter = undefined;
+        let r = await gm.updateCharacter(client, 'c1', { name: 'Brann', class: 'Smith', hpMax: 30, mpMax: 8, condition: 'healthy' });
+        expect(r.sheet).toMatchObject({ name: 'Brann', class: 'Smith', hp: { current: 30, max: 30 }, mp: { current: 8, max: 8 }, condition: 'healthy' });
+        r = await gm.updateCharacter(client, 'c1', { hpDelta: -12 });
+        r = await gm.updateCharacter(client, 'c1', { hpMax: 36 });
+        expect(r.sheet.hp).toEqual({ current: 18, max: 36 });
+        r = await gm.updateCharacter(client, 'c1', { hpMax: 10 });
+        expect(r.sheet.hp).toEqual({ current: 10, max: 10 });
+    });
+
+    it('keeps what it hands back to Claude short', async () => {
+        db.lore = [
+            ...Array.from({ length: 12 }, (_, i) => ({ id: `o${i}`, header: `Overview ${i}`, content: 'x'.repeat(5000), alwaysInclude: true })),
+            { id: 'big', header: 'Dragons', content: `dragon ${'y'.repeat(9000)}`, triggerKeywords: ['dragon'] },
+        ];
+        db.state.messages = Array.from({ length: 40 }, (_, i) => ({ id: `m${i}`, role: i % 2 ? 'assistant' : 'user', content: `${i} ${'z'.repeat(6000)}`, timestamp: i }));
+        const b = await gm.openCampaign(client, 'c1');
+        expect(b.worldOverview.reduce((n, l) => n + l.content.length, 0)).toBeLessThan(9000);
+        expect(b.recentTurns).toHaveLength(12);
+        expect(b.turnsPlayed).toBe(20);
+        expect(b.recentTurns.reduce((n, t) => n + t.text.length, 0)).toBeLessThan(20_000);
+        // The last GM reply is the one play resumes from, so it gets the most room.
+        expect(b.recentTurns.at(-1).text.length).toBeGreaterThan(b.recentTurns[0].text.length);
+        expect((await gm.openCampaign(client, 'c1', { recentTurns: 0 })).recentTurns).toEqual([]);
+        const lore = await gm.recallLore(client, 'c1', 'dragon');
+        expect(lore.results[0].content.length).toBeLessThan(2600);
     });
 
     it('still saves the turn when the archive is down', async () => {

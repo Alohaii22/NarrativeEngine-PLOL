@@ -8,13 +8,22 @@ const MAX_SIDES = 1000;
 
 export class DiceError extends Error {}
 
+/** The app's default d20 outcome bands (src/types/gamecontext.ts), read off the natural die. */
+export function outcomeTier(natural) {
+    if (natural <= 2) return 'Catastrophe';
+    if (natural <= 6) return 'Failure';
+    if (natural <= 15) return 'Success';
+    if (natural <= 19) return 'Triumph';
+    return 'Narrative Boon';
+}
+
 /**
  * @param {string} expression
  * @param {() => number} [random] returns [0, 1); injectable for tests
  */
 export function rollDice(expression, random = Math.random) {
     const raw = String(expression ?? '').trim();
-    if (!raw) throw new DiceError('Empty dice expression');
+    if (!raw) throw new DiceError('Empty dice expression. Use forms like d20, 2d6+3, 4d6kh3, 1d20+5 adv.');
 
     let text = raw.toLowerCase();
     let mode = 'normal';
@@ -24,8 +33,10 @@ export function rollDice(expression, random = Math.random) {
         text = text.slice(0, modeMatch.index).trim();
     }
 
-    const tokens = text.replace(/\s+/g, '').match(/[+-]?[^+-]+/g);
-    if (!tokens) throw new DiceError(`Can't read dice expression "${raw}"`);
+    const compact = text.replace(/\s+/g, '');
+    const tokens = compact.match(/[+-]?[^+-]+/g);
+    // Anything the tokens do not cover ("d20+", "d20++5") is a typo, not a roll.
+    if (!tokens || tokens.join('').length !== compact.length) throw new DiceError(`Can't read dice expression "${raw}"`);
 
     const groups = [];
     let modifier = 0;
@@ -65,7 +76,7 @@ export function rollDice(expression, random = Math.random) {
         groups.push({ notation: `${sign < 0 ? '-' : ''}${body}`, sides, rolls, dropped, subtotal });
     }
 
-    if (groups.length === 0) throw new DiceError(`"${raw}" has no dice in it`);
+    if (groups.length === 0) throw new DiceError(`"${raw}" has no dice in it. Use forms like d20, 2d6+3, 4d6kh3.`);
     const total = groups.reduce((a, g) => a + g.subtotal, 0) + modifier;
     const single = groups.length === 1 && groups[0].rolls.length === 1 ? groups[0] : null;
     return {
@@ -75,6 +86,7 @@ export function rollDice(expression, random = Math.random) {
         modifier,
         total,
         natural: single ? single.rolls[0] : null,
+        tier: single && single.sides === 20 ? outcomeTier(single.rolls[0]) : null,
         critical: single && single.sides === 20 ? (single.rolls[0] === 20 ? 'success' : single.rolls[0] === 1 ? 'failure' : null) : null,
     };
 }
@@ -87,5 +99,6 @@ export function describeRoll(result, label) {
     const mod = result.modifier ? ` ${result.modifier > 0 ? '+' : '-'} ${Math.abs(result.modifier)}` : '';
     const crit = result.critical === 'success' ? ' — NATURAL 20' : result.critical === 'failure' ? ' — NATURAL 1' : '';
     const mode = result.mode !== 'normal' ? ` with ${result.mode}` : '';
-    return `${label ? `${label}: ` : ''}${result.expression}${mode} → ${parts.join(' ')}${mod} = **${result.total}**${crit}`;
+    const tier = result.tier ? ` · tier: ${result.tier}` : '';
+    return `${label ? `${label}: ` : ''}${result.expression}${mode} → ${parts.join(' ')}${mod} = **${result.total}**${crit}${tier}`;
 }

@@ -6,6 +6,10 @@ import { createEngineLauncher } from '../mcp/engineLauncher.js';
 import { createEngineClient } from '../mcp/engineClient.js';
 import { mergeConfig, configPaths, serverEntry } from '../../scripts/install-claude-gm.mjs';
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
+
+const TEST_LOG = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ne-launcher-')), 'engine.log');
 
 describe('world catalog', () => {
     const worlds = listWorlds();
@@ -96,8 +100,10 @@ describe('Claude Desktop installer', () => {
 
     it('knows where Claude Desktop keeps its config', () => {
         expect(configPaths('win32', { APPDATA: 'C:\\Users\\a\\AppData\\Roaming', LOCALAPPDATA: '/nonexistent' }, '/h')[0]).toMatch(/Roaming[\\/]Claude[\\/]claude_desktop_config\.json$/);
-        expect(configPaths('darwin', {}, '/Users/a')[0]).toBe('/Users/a/Library/Application Support/Claude/claude_desktop_config.json');
-        expect(configPaths('linux', {}, '/home/a')[0]).toBe('/home/a/.config/Claude/claude_desktop_config.json');
+        // path.join uses the separator of the machine running the test.
+        const posix = (p) => p.replace(/\\/g, '/');
+        expect(posix(configPaths('darwin', {}, '/Users/a')[0])).toBe('/Users/a/Library/Application Support/Claude/claude_desktop_config.json');
+        expect(posix(configPaths('linux', {}, '/home/a')[0])).toBe('/home/a/.config/Claude/claude_desktop_config.json');
     });
 });
 
@@ -105,15 +111,41 @@ describe('engine auto-start', () => {
     it('starts the engine once when it is down, then retries the request', async () => {
         let up = false;
         const spawnImpl = vi.fn(() => { setTimeout(() => { up = true; }, 50); return { unref() {} }; });
+        const portTakenImpl = async () => false;
         const fetchImpl = vi.fn(async () => {
             if (!up) throw new Error('ECONNREFUSED');
             return new Response('[]', { status: 200 });
         });
-        const ensureEngine = createEngineLauncher({ baseUrl: 'http://127.0.0.1:3001', fetchImpl, spawnImpl, timeoutMs: 5_000, enabled: true });
+        const ensureEngine = createEngineLauncher({ baseUrl: 'http://127.0.0.1:3001', fetchImpl, spawnImpl, portTakenImpl, logFile: TEST_LOG, timeoutMs: 5_000, enabled: true });
         const client = createEngineClient({ baseUrl: 'http://127.0.0.1:3001', fetchImpl, ensureEngine });
         await expect(Promise.all([client.listCampaigns(), client.listCampaigns()])).resolves.toEqual([[], []]);
         expect(spawnImpl).toHaveBeenCalledTimes(1);
         expect(spawnImpl.mock.calls[0][1]).toEqual(['server.js']);
+    });
+
+    it('says so instead of spawning when another program holds the port', async () => {
+        const spawnImpl = vi.fn();
+        const ensureEngine = createEngineLauncher({ baseUrl: 'http://127.0.0.1:3001', fetchImpl: async () => { throw new Error('down'); }, spawnImpl, portTakenImpl: async () => true, logFile: TEST_LOG, enabled: true });
+        expect(await ensureEngine()).toBe(false);
+        expect(ensureEngine.lastError).toMatch(/Another program is using port 3001/);
+        expect(spawnImpl).not.toHaveBeenCalled();
+    });
+
+    it('stops waiting and quotes the log when the engine dies on startup', async () => {
+        const spawnImpl = vi.fn(() => ({ unref() {}, on(event, cb) { if (event === 'exit') setTimeout(() => cb(1, null), 20); } }));
+        const started = Date.now();
+        const ensureEngine = createEngineLauncher({ baseUrl: 'http://127.0.0.1:3001', fetchImpl: async () => { throw new Error('down'); }, spawnImpl, portTakenImpl: async () => false, logFile: TEST_LOG, timeoutMs: 30_000, enabled: true });
+        expect(await ensureEngine()).toBe(false);
+        expect(Date.now() - started).toBeLessThan(5_000);
+        expect(ensureEngine.lastError).toMatch(/stopped right after starting \(1\)/);
+    });
+
+    it('explains a folder that was never installed', async () => {
+        const spawnImpl = vi.fn();
+        const ensureEngine = createEngineLauncher({ baseUrl: 'http://127.0.0.1:3001', fetchImpl: async () => { throw new Error('down'); }, spawnImpl, portTakenImpl: async () => false, logFile: TEST_LOG, enabled: true, repoRoot: '/no/such/folder' });
+        expect(await ensureEngine()).toBe(false);
+        expect(ensureEngine.lastError).toMatch(/Play_With_Claude\.bat/);
+        expect(spawnImpl).not.toHaveBeenCalled();
     });
 
     it('never spawns for a remote engine or when disabled', async () => {

@@ -14,6 +14,7 @@ export function createEngineClient({
     baseUrl = process.env.NARRATIVE_ENGINE_URL || DEFAULT_ENGINE_URL,
     fetchImpl = globalThis.fetch,
     ensureEngine = null,
+    timeoutMs = 60_000,
 } = {}) {
     const root = baseUrl.replace(/\/+$/, '');
 
@@ -25,6 +26,8 @@ export function createEngineClient({
             method,
             headers,
             body: body === undefined ? undefined : JSON.stringify(body),
+            // A hung engine must fail the tool call, not hang the chat.
+            signal: AbortSignal.timeout(timeoutMs),
         });
         let res;
         try {
@@ -36,9 +39,13 @@ export function createEngineClient({
                 res = await send();
             }
         } catch (err) {
+            const cause = err?.cause?.code ?? err?.cause?.message ?? err?.message ?? err;
+            const why = ensureEngine?.lastError ? `${ensureEngine.lastError} ` : '';
             throw new EngineUnavailableError(
-                `Can't reach Narrative Engine at ${root} (${err?.message ?? err}). ` +
-                'Start it first: run `npm run dev` (or `node server.js`) in the NarrativeEngine folder.',
+                `Narrative Engine is not running, so nothing can be loaded or saved (no answer from ${root}: ${cause}). ${why}` +
+                'Tell the player, in plain words: double-click Play_With_Claude.bat in the Narrative Engine folder ' +
+                '(or run `npm run dev` there), wait for the window to say it is running, then ask to continue. ' +
+                'Startup details are in server/mcp/.cache/engine.log. Do not keep narrating as if turns were saved.',
             );
         }
         if (res.status === 404) return null;
