@@ -178,6 +178,9 @@ export async function flushAllPendingSaves(): Promise<void> {
 export function debouncedSaveCampaignState() {
     if (stateTimer) clearTimeout(stateTimer);
     stateTimer = setTimeout(() => {
+        // Clear the handle once it has fired: hasPendingSaves() reads it, and a
+        // stale handle made every later check report a save still pending.
+        stateTimer = null;
         if (!_getStateForSave) return;
         const { activeCampaignId, context, messages, condenser, pinnedExcerpts } = _getStateForSave();
         if (!activeCampaignId) return;
@@ -194,6 +197,7 @@ function debouncedSaveLoreChunks(campaignId: string | null, chunks: LoreChunk[])
     if (!campaignId) return;
     if (loreTimer) clearTimeout(loreTimer);
     loreTimer = setTimeout(() => {
+        loreTimer = null;
         fetch(`${API}/campaigns/${campaignId}/lore`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
@@ -207,6 +211,7 @@ export function debouncedSaveNPCLedger(campaignId: string | null, npcs: NPCEntry
     if (!campaignId) return;
     if (npcTimer) clearTimeout(npcTimer);
     npcTimer = setTimeout(() => {
+        npcTimer = null;
         fetch(`${API}/campaigns/${campaignId}/npcs`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },

@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useFlushSavesOnExit } from '../useFlushSavesOnExit';
 import { useAppStore } from '../../store/useAppStore';
-import { cancelPendingSaves, debouncedSaveCampaignState, hasPendingSaves } from '../../store/slices/campaignSlice';
+import { cancelPendingSaves, debouncedSaveCampaignState, debouncedSaveNPCLedger, hasPendingSaves } from '../../store/slices/campaignSlice';
 
 type AppState = ReturnType<typeof useAppStore.getState>;
 let fetchMock: ReturnType<typeof vi.fn>;
@@ -71,6 +71,24 @@ describe('useFlushSavesOnExit', () => {
         debouncedSaveCampaignState();
         setVisibility('visible');
         expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    // The timer handles were never cleared when the debounce fired on its own,
+    // so after the first save the page reported a pending save for ever: a
+    // "leave site?" prompt on every close, and the live display never reloaded
+    // turns Claude recorded through the MCP server (useExternalCampaignSync
+    // skips a reload while a save is pending).
+    it('stops reporting a pending save once the debounce has fired by itself', () => {
+        renderHook(() => useFlushSavesOnExit());
+        debouncedSaveCampaignState();
+        debouncedSaveNPCLedger('camp-a', []);
+        expect(hasPendingSaves()).toBe(true);
+
+        vi.advanceTimersByTime(1100);
+
+        expect(fetchMock).toHaveBeenCalledTimes(2);
+        expect(hasPendingSaves()).toBe(false);
+        expect(fireBeforeUnload().defaultPrevented).toBe(false);
     });
 
     it('removes its listeners on unmount', () => {
