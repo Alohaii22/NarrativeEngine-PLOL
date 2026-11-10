@@ -47,29 +47,31 @@ if %LEGACY%==10 (
     timeout /t 2 /nobreak >nul
 )
 
+if exist "%LOCALAPPDATA%\AnthropicClaude\claude.exe" start "" "%LOCALAPPDATA%\AnthropicClaude\claude.exe"
+
 node scripts\install-claude-gm.mjs --check-extension
-if errorlevel 3 (
-    echo.
-    echo   Opening the extension in Claude Desktop: click INSTALL when it asks.
-    start "" "%~dp0NarrativeEngine.mcpb"
-) else (
-    echo   The Narrative Engine extension is already installed in Claude Desktop.
-    if exist "%LOCALAPPDATA%\AnthropicClaude\claude.exe" start "" "%LOCALAPPDATA%\AnthropicClaude\claude.exe"
-)
+set NEED_INSTALL=%errorlevel%
+if "%NEED_INSTALL%"=="3" explorer /select,"%~dp0NarrativeEngine.mcpb"
 
 timeout /t 6 /nobreak >nul
 start "" "http://localhost:5173/launcher.html"
 
 echo.
-echo   Ready! In Claude Desktop:
-echo     1. If an install screen appeared, click Install.
-echo        (No install screen? Drag NarrativeEngine.mcpb from this folder
-echo         into the Claude Desktop window.)
-echo     2. Start a new chat and type:   Let's play Narrative Engine
-echo     3. Allow the narrative-engine tools when Claude asks.
+if "%NEED_INSTALL%"=="3" (
+    echo   ONE-TIME SETUP in Claude Desktop:
+    echo     Settings ^> Desktop app ^> Manage ^(next to Extensions^)
+    echo     ^> Advanced settings ^> Install Extension...
+    echo     and pick NarrativeEngine.mcpb ^(highlighted in the window that opened^).
+    echo     Or drag that file onto the Claude Desktop window. Then click Install.
+    echo.
+) else (
+    echo   The Narrative Engine extension is already installed in Claude Desktop.
+    echo.
+)
+echo   Then start a new chat in Claude Desktop and type:   Let's play Narrative Engine
+echo   ^(Allow the narrative-engine tools when Claude asks.^)
 echo.
-echo   Check it under Settings ^> Extensions. If something fails, send
-echo   server\mcp\.cache\mcp.log to whoever is helping you.
+echo   If something fails, send server\mcp\.cache\mcp.log to whoever is helping you.
 echo.
 pause
 exit /b 0

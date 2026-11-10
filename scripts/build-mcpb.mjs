@@ -3,7 +3,7 @@
  * Builds NarrativeEngine.mcpb: a Claude Desktop extension (MCP Bundle) that
  * runs this folder's MCP server (server/mcp). Double-click the file and
  * Claude Desktop shows an Install screen; the extension then lives under
- * Settings > Extensions.
+ * Settings > Desktop app > Extensions.
  *
  * The bundle is a thin launcher. It starts server/mcp/index.js from this
  * folder with the Node.js that installed it (the one `npm install` built the
@@ -35,7 +35,7 @@ try { fs.mkdirSync(logDir, { recursive: true }); log = fs.createWriteStream(path
 const note = (msg) => { const line = '[' + new Date().toISOString() + '] ' + msg + '\\n'; process.stderr.write(line); if (log) log.write(line); };
 
 if (!folder || !fs.existsSync(entry)) {
-  note('Narrative Engine folder not found: "' + folder + '". Open Settings > Extensions > Narrative Engine and choose the folder that contains Play_With_Claude.bat.');
+  note('Narrative Engine folder not found: "' + folder + '". Open Settings > Desktop app > Extensions (Manage) > Narrative Engine and choose the folder that contains Play_With_Claude.bat.');
   process.exit(1);
 }
 

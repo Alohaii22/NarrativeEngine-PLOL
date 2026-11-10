@@ -20,7 +20,7 @@ plays.
 
 1. Install [Claude Desktop](https://claude.ai/download) and [Node.js LTS](https://nodejs.org/) if you don't have them.
 2. Double-click **`Play_With_Claude.bat`** (Windows) or **`Play_With_Claude.command`** (macOS).
-3. Claude Desktop opens an install screen for the **Narrative Engine** extension: click **Install**. If no screen appears, drag `NarrativeEngine.mcpb` from the folder into the Claude Desktop window, or use **Settings > Extensions > Advanced settings > Install Extension…**.
+3. Install the extension in Claude Desktop: **Settings > Desktop app**, click **Manage** next to **Extensions**, then **Advanced settings > Install Extension…** (in the **Extension Developer** section), choose `NarrativeEngine.mcpb` from the folder, and click **Install**. Dragging the file onto the Claude Desktop window also works.
 4. Start a new chat and type **"Let's play Narrative Engine"**. Allow the `narrative-engine` tools when asked.
 
 The first run installs everything, which takes a few minutes. The button then:
@@ -29,7 +29,7 @@ The first run installs everything, which takes a few minutes. The button then:
 
 If Narrative Engine isn't running when Claude needs it, it starts in the background on its own.
 
-**Check it:** the extension appears under **Settings > Extensions**, where you can turn it on or off and change its folder.
+**Check it:** in a chat, click **+** below the message box and choose **Connectors**: Narrative Engine should be listed. It also appears on the Extensions page (**Settings > Desktop app**, **Manage** next to Extensions), where you can turn it off or change its folder. (Older Claude Desktop versions had this under **Settings > Extensions**.)
 **If it fails:** open `server/mcp/.cache/mcp.log` in the Narrative Engine folder. The extension logs every start and error there.
 
 The manual steps below are only needed if you want to set things up by hand (for example with Claude Code, or on Linux).
